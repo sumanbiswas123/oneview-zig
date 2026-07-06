@@ -1,0 +1,23 @@
+.{
+    .id = "com.oneview.app",
+    .name = "oneview",
+    .display_name = "OneView Super-App",
+    .version = "1.0.0",
+    .web_engine = "system",
+    .capabilities = .{
+        "webview",
+        "js_bridge",
+    },
+    .cef = .{
+        .dir = "cef",
+        .auto_install = false,
+    },
+    .windows = .{
+        .{
+            .label = "main",
+            .title = "OneView",
+            .width = 1280,
+            .height = 720,
+        },
+    },
+}

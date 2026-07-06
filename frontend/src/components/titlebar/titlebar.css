@@ -1,0 +1,84 @@
+@import "../../styles/fonts.css";
+
+/* Shared titlebar styles - keep consistent across pages */
+.drag-box {
+  position: fixed;
+  background-color: transparent;
+  width: 100%;
+  top: 0;
+  left: 0;
+  height: 5%;
+  z-index: 1000;
+}
+
+.titlebar {
+  -webkit-app-region: no-drag;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  position: absolute;
+  top: 0;
+  right: 8px;
+  z-index: 1300;
+}
+
+.action-btn {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 0px;
+  margin: 5px 4px 0px 0px;
+  padding: 5px 0px 0px 0px;
+  -webkit-app-region: no-drag;
+  float: right;
+}
+
+.action-btn::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0;
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+  pointer-events: none;
+}
+
+#close-btn {
+  background-color: #e7524b;
+}
+#max-btn {
+  background-color: #3fc772;
+}
+#min-btn {
+  background-color: #efca00;
+}
+/* 
+#close-btn:hover::after { content: '✕'; color: #111; opacity: 1; }
+#min-btn:hover::after   { content: '–';  color: #111; opacity: 1; }
+#max-btn:hover::after   { content: '▢';  color: #111; opacity: 1; } */
+
+/* .action-btn:hover::after { transform: translate(-50%, -50%) scale(1.05); } */
+
+/* special hover states to make icons visible when hovered */
+/* #min-btn:hover { background-color: #ffea00; }
+#close-btn:hover { box-shadow: 0 0 0 4px rgba(231,82,75,0.08); }
+#max-btn:hover { box-shadow: 0 0 0 4px rgba(63,199,114,0.06); } */
+
+/* When maximized show alternate icon */
+/* #max-btn.maximized::after { content: '❐'; opacity: 1; color: #fff; } */
+
+/* ensure titlebar controls sit above page content */
+/* body { position: relative; } */
+
+body.maximized header {
+  margin-top: 8px !important;
+}

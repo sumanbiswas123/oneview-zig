@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+<!-- Icon Group -->
+<!-- <g fill="#3498DB"> -->
+  <!-- 'O' (Bulb Glass) - Circle -->
+  <circle xmlns="http://www.w3.org/2000/svg" cx="50" cy="50" r="45" fill="transparent" stroke="#333333     " style="     fill: none;     stroke: #000000;     stroke-width: 5px;     /* stroke-dasharray: 2,2; */     stroke-linejoin: round; "/>
+  
+  <!-- 'V' (Bulb Base) - Inverted Trapezoid -->
+  <!-- <circle xmlns="http://www.w3.org/2000/svg" cx="50" cy="50" r="1" fill="transparent" stroke="#333333     " style="     fill: none;     stroke: #000000;     stroke-width: 3px;     /* stroke-dasharray: 2,2; */     stroke-linejoin: round; "/> -->
+  <!-- 'V' (Bulb Base) - Inverted Trapezoid -->
+  <polygon points="23,15 50,80 77,15 50,90" style="fill: #000;stroke: #000000;stroke-width: 5px;"/>
+<!-- </g> -->
+
+<!-- <polygon points="0,0 50,50 100,50" style="fill: #000;stroke: #000000;stroke-width: 1px;"/> -->
+
+</svg>

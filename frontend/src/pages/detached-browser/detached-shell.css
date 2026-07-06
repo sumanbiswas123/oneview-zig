@@ -1,0 +1,164 @@
+body {
+  margin: 0;
+  background: linear-gradient(180deg, #dbeafe 0%, #f8fafc 28%);
+  font-family: "Silka", "Segoe UI", sans-serif;
+  overflow: hidden;
+}
+
+body.dark-mode {
+  background: linear-gradient(180deg, #0f172a 0%, #111827 32%);
+}
+
+.attach-main-btn {
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 999px;
+  padding: 0 12px;
+  min-width: 0;
+  height: 34px;
+  background: rgba(255, 255, 255, 0.42);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: #0f172a;
+  font-family: "Silka", "Segoe UI", sans-serif;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+}
+
+.attach-main-btn:hover {
+  background: rgba(255, 255, 255, 0.82);
+}
+
+body.dark-mode .attach-main-btn {
+  border-color: rgba(148, 163, 184, 0.26);
+  background: rgba(15, 23, 42, 0.72);
+  color: #e2e8f0;
+  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.28);
+}
+
+body.dark-mode .attach-main-btn:hover {
+  background: rgba(30, 41, 59, 0.92);
+}
+
+.detached-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: 10px;
+  -webkit-app-region: no-drag;
+}
+
+.detached-window-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+}
+
+.detached-window-btn:hover {
+  background: white;
+  transform: scale(1.05);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+}
+
+body.dark-mode .detached-window-btn {
+  border-color: rgba(148, 163, 184, 0.26);
+  background: rgba(15, 23, 42, 0.72);
+  color: #cbd5e1;
+  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.28);
+}
+
+body.dark-mode .detached-window-btn:hover {
+  background: rgba(30, 41, 59, 0.92);
+  color: #f8fafc;
+}
+
+.detached-window-btn.close:hover {
+  color: #ef4444;
+  background: #fef2f2;
+  border-color: #fecaca;
+  box-shadow: 0 8px 20px rgba(239, 68, 68, 0.15);
+}
+
+.detached-window-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.detached-view-root {
+  height: 100vh;
+  overflow: visible;
+}
+
+.detached-view-root .main-content {
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+}
+
+.detached-view-root .tabs-header {
+  -webkit-app-region: drag;
+}
+
+.detached-view-root .tabs-header .tabs-list,
+.detached-view-root .tabs-header .tab,
+.detached-view-root .tabs-header .tab *,
+.detached-view-root .tabs-header .new-tab-btn,
+.detached-view-root .tabs-header .tabs-nav-btn,
+.detached-view-root .tabs-header .view-header-actions,
+.detached-view-root .tabs-header .view-header-actions *,
+.detached-view-root .tabs-header .profile-section,
+.detached-view-root .tabs-header .profile-section *,
+.detached-view-root .tabs-header .attach-main-btn,
+.detached-view-root .tabs-header .detached-window-controls,
+.detached-view-root .tabs-header .detached-window-controls *,
+.detached-view-root .browser-controls-overlay,
+.detached-view-root .browser-controls-overlay *,
+.detached-view-root input,
+.detached-view-root button {
+  -webkit-app-region: no-drag;
+}
+
+.detached-view-root .view-layout {
+  height: 100%;
+  overflow: visible;
+  width: 100%;
+}
+
+.detached-view-root .view-viewport {
+  overflow: hidden;
+}
+
+.detached-view-root .profile-section {
+  margin-right: 0;
+  z-index: 10020;
+}
+
+.detached-view-root .view-header-actions {
+  margin-right: 0;
+}
+
+.detached-view-root .profile-dropdown {
+  z-index: 10030;
+}
+
+.detached-view-root .window-drag-region {
+  flex: 1 1 auto;
+  min-width: 16px;
+}
+
+body.maximized .detached-view-root .tabs-header {
+  padding-top: 8px !important;
+}

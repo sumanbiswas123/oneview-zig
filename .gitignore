@@ -1,0 +1,25 @@
+# Zig
+.zig-cache/
+zig-out/
+zig-pkg/
+.zig-compiler/
+
+# Frontend / Node.js
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+
+# OS/IDEs
+.DS_Store
+.vscode/
+.idea/
+
+# Local/Environment configs
+.env
+.env.local
+.env.*.local
+
+# Large downloaded assets / executables
+*.zip
+setup.exe

@@ -1,0 +1,944 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OneView Web</title>
+    <link rel="stylesheet" href="../../styles/fonts.css" />
+    <link rel="stylesheet" href="../../styles/theme.css" />
+    <link rel="stylesheet" href="../../pages/appstore/appstore.css" />
+    <link rel="stylesheet" href="view.css" />
+  </head>
+  <body>
+    <div class="main-content">
+      <div class="view-layout">
+        <!-- Tabs Bar -->
+        <div class="tabs-header">
+          <button
+            id="tabsScrollLeft"
+            class="tabs-nav-btn"
+            title="Scroll tabs left"
+          >
+            <span>&lsaquo;</span>
+          </button>
+          <div class="tabs-list" id="tabsList">
+            <!-- Tabs injected here -->
+          </div>
+          <button
+            id="tabsScrollRight"
+            class="tabs-nav-btn"
+            title="Scroll tabs right"
+          >
+            <span>&rsaquo;</span>
+          </button>
+          <button id="newTabBtn" class="new-tab-btn" title="New Tab">
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="3"
+            >
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </button>
+          <div class="window-drag-region"></div>
+
+          <!-- Profile Switcher -->
+          <div class="profile-section">
+            <button id="profileBtn" class="profile-btn" title="Switch Profile">
+              <span id="profileLabel">G</span>
+            </button>
+            <div id="profileDropdown" class="profile-dropdown hidden">
+              <!-- Profile items injected by JS -->
+            </div>
+          </div>
+
+          <div class="view-header-actions">
+            <button
+              id="bookmarkCurrentPageHeaderBtn"
+              class="view-header-control"
+              type="button"
+              title="Save current site to bookmarks"
+              aria-label="Save current site to bookmarks"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+              </svg>
+            </button>
+            <button
+              id="settingsBtn"
+              class="view-header-control"
+              type="button"
+              title="Settings"
+              aria-label="Settings"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <circle cx="12" cy="12" r="3"></circle>
+                <path
+                  d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0A1.65 1.65 0 0 0 9 3.09V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0A1.65 1.65 0 0 0 20.91 11H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
+                ></path>
+              </svg>
+            </button>
+            <button
+              id="browserDetachHeader"
+              class="view-header-control hidden"
+              type="button"
+              title="Open in separate window"
+              aria-label="Open in separate window"
+            >
+              ↗
+            </button>
+          </div>
+        </div>
+        <div id="tabContextMenu" class="tab-context-menu hidden">
+          <button
+            type="button"
+            class="tab-context-item"
+            data-action="clear-all"
+          >
+            Clear All Tabs
+          </button>
+          <button
+            type="button"
+            class="tab-context-item"
+            data-action="clear-right"
+          >
+            Clear Right Tabs
+          </button>
+          <button
+            type="button"
+            class="tab-context-item"
+            data-action="clear-left"
+          >
+            Clear Left Tabs
+          </button>
+          <button
+            type="button"
+            class="tab-context-item destructive"
+            data-action="clear-cache"
+          >
+            Clear Page Cache
+          </button>
+          <button
+            type="button"
+            class="tab-context-item destructive"
+            data-action="clear-user-data"
+          >
+            Clear User Data
+          </button>
+        </div>
+
+        <!-- View Viewport (Renamed from main-content to avoid conflict) -->
+        <div class="view-viewport">
+          <!-- Home Content (Visible when active tab is "Home") -->
+          <div id="view-home-content">
+            <!-- Search Section -->
+            <div class="search-section">
+              <div class="google-logo">
+                <img
+                  src="https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png"
+                  alt="Google"
+                />
+              </div>
+              <div class="search-bar-container">
+                <div class="search-icon">
+                  <svg
+                    focusable="false"
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"
+                    ></path>
+                  </svg>
+                </div>
+                <input
+                  type="text"
+                  id="googleSearchInput"
+                  placeholder="Search Google or type a URL"
+                  autocomplete="off"
+                />
+                <div
+                  id="addressSearchDropdownHome"
+                  class="address-search-dropdown hidden"
+                ></div>
+              </div>
+            </div>
+
+            <!-- Bookmarks Section -->
+            <section class="bookmarks-section">
+              <div class="section-header">
+                <h2>Quick Access</h2>
+              </div>
+              <div class="bookmarks-grid">
+                <!-- Cards injected via JS or static -->
+                <!-- Imagine WPP -->
+                <div
+                  class="bookmark-card"
+                  data-url="https://imagine.wpp.ai"
+                  data-partition="wppproduction"
+                  data-title="Imagine WPP"
+                >
+                  <div
+                    class="bookmark-icon"
+                    style="
+                      background: linear-gradient(
+                        135deg,
+                        #667eea 0%,
+                        #764ba2 100%
+                      );
+                    "
+                  >
+                    <span>WPP</span>
+                  </div>
+                  <div class="bookmark-info">
+                    <h3>Imagine WPP</h3>
+                    <p>AI Powered Expert</p>
+                  </div>
+                </div>
+
+                <!-- EMpower -->
+                <div
+                  class="bookmark-card"
+                  data-url="https://imagine.wpp.ai/ZQygLJRKg3NV0LneHHii2"
+                  data-partition="wppproduction"
+                  data-title="EMpower"
+                >
+                  <div
+                    class="bookmark-icon"
+                    style="
+                      background: linear-gradient(
+                        135deg,
+                        #ff9a9e 0%,
+                        #fecfef 99%,
+                        #fecfef 100%
+                      );
+                    "
+                  >
+                    <span>EM</span>
+                  </div>
+                  <div class="bookmark-info">
+                    <h3>EMpower Knowledge</h3>
+                    <p>AI Powered Expert</p>
+                  </div>
+                </div>
+
+                <!-- Production AI -->
+                <div
+                  class="bookmark-card"
+                  data-url="https://imagine.wpp.ai/Bu9gwEgqMHnLq9iOAjc69"
+                  data-partition="wppproduction"
+                  data-title="Production AI"
+                >
+                  <div
+                    class="bookmark-icon"
+                    style="
+                      background: linear-gradient(
+                        120deg,
+                        #84fab0 0%,
+                        #8fd3f4 100%
+                      );
+                    "
+                  >
+                    <span>PRO</span>
+                  </div>
+                  <div class="bookmark-info">
+                    <h3>Production AI</h3>
+                    <p>AI Powered</p>
+                  </div>
+                </div>
+
+                <!-- AEM -->
+                <div
+                  class="bookmark-card"
+                  data-url="https://author.prod-cf65.gskinternet.com/aem/start.html"
+                  data-partition="gsk"
+                  data-title="AEM"
+                >
+                  <div
+                    class="bookmark-icon"
+                    style="
+                      background: linear-gradient(
+                        to top,
+                        #fbc2eb 0%,
+                        #a6c1ee 100%
+                      );
+                    "
+                  >
+                    <span>AEM</span>
+                  </div>
+                  <div class="bookmark-info">
+                    <h3>AEM</h3>
+                    <p>Content Management</p>
+                  </div>
+                </div>
+
+                <!-- Veeva -->
+                <div
+                  class="bookmark-card"
+                  data-url="https://gsk-contentlab.veevavault.com/"
+                  data-partition="gsk"
+                  data-title="Veeva"
+                >
+                  <div
+                    class="bookmark-icon"
+                    style="
+                      background: linear-gradient(
+                        to right,
+                        #4facfe 0%,
+                        #00f2fe 100%
+                      );
+                    "
+                  >
+                    <span>V</span>
+                  </div>
+                  <div class="bookmark-info">
+                    <h3>Veeva Vault</h3>
+                    <p>Content Lab</p>
+                  </div>
+                </div>
+
+                <!-- Jira -->
+                <div
+                  class="bookmark-card"
+                  data-url="https://jira.uhub.biz/"
+                  data-partition="vml"
+                  data-title="Jira"
+                >
+                  <div
+                    class="bookmark-icon"
+                    style="
+                      background: linear-gradient(
+                        to top,
+                        #30cfd0 0%,
+                        #330867 100%
+                      );
+                      color: white;
+                    "
+                  >
+                    <span>Jira</span>
+                  </div>
+                  <div class="bookmark-info">
+                    <h3>Jira</h3>
+                    <p>Project Tracking</p>
+                  </div>
+                </div>
+
+                <div
+                  id="view-synapse-link-btn"
+                  class="bookmark-card"
+                  data-url="http://10.215.56.196:5000"
+                  data-profile-id="guest"
+                  data-partition="synapse"
+                  data-session-scope="synapse"
+                  data-title="Synapse"
+                  style="display: none"
+                >
+                  <div class="bookmark-icon">
+                    <img src="/assets/synapse.png" alt="Synapse" />
+                  </div>
+                  <div class="bookmark-info">
+                    <h3>Synapse</h3>
+                    <p>Knowledge Workspace</p>
+                  </div>
+                </div>
+
+                <div
+                  id="view-contentgen-link-btn"
+                  class="bookmark-card"
+                  data-url="http://10.215.56.196:3456"
+                  data-profile-id="guest"
+                  data-partition="contentgen"
+                  data-session-scope="contentgen"
+                  data-title="ContentGen"
+                >
+                  <div class="bookmark-icon">
+                    <img
+                      src="/assets/contentgen.png"
+                      data-theme-icon="contentgen"
+                      alt="ContentGen"
+                    />
+                  </div>
+                  <div class="bookmark-info">
+                    <h3>ContentGen</h3>
+                    <p>Content Generator</p>
+                  </div>
+                </div>
+
+                <div
+                  id="view-interactive-framework-link-btn"
+                  class="bookmark-card"
+                  data-url="https://gskpro-com.preview-cf65.gskinternet.com/content/cf-pharma/health-hcpportal/master/interactive/epresentation/ansh_assessment.html"
+                  data-profile-id="gsk"
+                  data-partition="gsk"
+                  data-title="Interactive Framework"
+                >
+                  <div class="bookmark-icon bookmark-icon-if">
+                    <span>IF</span>
+                  </div>
+                  <div class="bookmark-info">
+                    <h3>Interactive Framework</h3>
+                    <p>Interactive Presentation</p>
+                  </div>
+                </div>
+
+                <div
+                  id="addBookmarkBtn"
+                  class="bookmark-card add-bookmark-card"
+                  role="button"
+                  tabindex="0"
+                  title="Add Bookmark"
+                >
+                  <div class="bookmark-icon add-bookmark-icon">
+                    <span>+</span>
+                  </div>
+                  <div class="bookmark-info">
+                    <h3>Add Bookmark</h3>
+                    <p>Create Quick Access card</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div id="nativeTabContent" class="native-tab-content hidden"></div>
+
+          <!-- Webviews Container (Holds multiple webviews) -->
+          <div id="webviews-container" class="webviews-container hidden">
+            <!-- Browser Controls Overlay -->
+            <div class="browser-controls-overlay">
+              <button id="browserBack" title="Back">←</button>
+              <button id="browserForward" title="Forward">→</button>
+              <button id="browserReload" title="Reload">↻</button>
+              <button id="browserDetach" title="Open in separate window">
+                ↗
+              </button>
+              <input
+                class="url-display"
+                id="urlDisplay"
+                type="text"
+                spellcheck="false"
+                autocomplete="off"
+                aria-label="Address"
+              />
+              <div
+                id="addressSearchDropdown"
+                class="address-search-dropdown hidden"
+              ></div>
+              <div class="browser-extensions-area">
+                <button
+                  id="downloadsManagerBtn"
+                  class="browser-extensions-menu-btn"
+                  type="button"
+                  title="Downloads"
+                  aria-label="Downloads"
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path d="M12 3v12"></path>
+                    <path d="m7 10 5 5 5-5"></path>
+                    <path d="M5 21h14"></path>
+                  </svg>
+                  <span
+                    id="downloadsManagerBadge"
+                    class="downloads-manager-badge hidden"
+                  ></span>
+                </button>
+                <div
+                  id="browserExtensionsPinned"
+                  class="browser-extensions-pinned hidden"
+                ></div>
+                <button
+                  id="browserExtensionsMenuBtn"
+                  class="browser-extensions-menu-btn"
+                  type="button"
+                  title="Extensions"
+                  aria-label="Extensions"
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path
+                      d="M20 12h-2.2a2.8 2.8 0 0 0-2.74-3.3 2.8 2.8 0 1 0-4.12-2.47V4a2 2 0 1 0-4 0v2.23a2.8 2.8 0 1 0-4.12 2.47A2.8 2.8 0 0 0 4.2 12H2a2 2 0 1 0 0 4h2.2a2.8 2.8 0 0 0 2.74 3.3 2.8 2.8 0 1 0 4.12 2.47V20a2 2 0 1 0 4 0v-2.23a2.8 2.8 0 1 0 4.12-2.47A2.8 2.8 0 0 0 20 16h2a2 2 0 1 0 0-4Z"
+                    ></path>
+                  </svg>
+                </button>
+                <div
+                  id="browserExtensionsMenu"
+                  class="browser-extensions-menu hidden"
+                ></div>
+                <div
+                  id="downloadsManagerPanel"
+                  class="downloads-manager-panel hidden"
+                ></div>
+              </div>
+            </div>
+            <div
+              id="browserExtensionPopup"
+              class="browser-extension-popup hidden"
+            >
+              <div class="browser-extension-popup-topbar">
+                <div class="browser-extension-popup-meta">
+                  <div
+                    id="browserExtensionPopupIcon"
+                    class="browser-extension-popup-icon"
+                  ></div>
+                  <div class="browser-extension-popup-text">
+                    <strong id="browserExtensionPopupTitle">Extension</strong>
+                    <span id="browserExtensionPopupSubtitle"></span>
+                  </div>
+                </div>
+                <div class="browser-extension-popup-actions">
+                  <button
+                    id="browserExtensionPopupOpenTab"
+                    type="button"
+                    title="Open in tab"
+                  >
+                    Open
+                  </button>
+                  <button
+                    id="browserExtensionPopupClose"
+                    type="button"
+                    title="Close"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+              <div
+                id="browserExtensionPopupMount"
+                class="browser-extension-popup-mount"
+              ></div>
+            </div>
+          </div>
+        </div>
+        <div id="passwordManagerModal" class="password-modal hidden">
+          <div class="password-modal-card">
+            <div class="password-modal-header">
+              <h3>Password Manager</h3>
+              <button
+                id="passwordModalCloseBtn"
+                class="password-modal-close"
+                type="button"
+                aria-label="Close"
+                title="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            <form id="passwordForm" class="password-form">
+              <div class="password-field">
+                <label for="passwordProfileSelect">Profile</label>
+                <div
+                  id="passwordProfileSelect"
+                  class="profile-pill-select"
+                ></div>
+              </div>
+              <div class="password-field">
+                <label for="passwordDomainInput">Domain</label>
+                <input
+                  id="passwordDomainInput"
+                  type="text"
+                  placeholder="example.com"
+                  required
+                />
+              </div>
+              <div class="password-field">
+                <label for="passwordUsernameInput">Username / Email</label>
+                <input id="passwordUsernameInput" type="text" required />
+              </div>
+              <div class="password-field">
+                <label for="passwordSecretInput">Password</label>
+                <input id="passwordSecretInput" type="password" required />
+              </div>
+              <button
+                id="passwordSaveBtn"
+                type="submit"
+                class="password-save-btn"
+              >
+                Save Credential
+              </button>
+            </form>
+
+            <div id="passwordList" class="password-list"></div>
+          </div>
+        </div>
+        <div id="httpAuthModal" class="password-modal hidden">
+          <div class="password-modal-card">
+            <div class="password-modal-header">
+              <h3 id="httpAuthModalTitle">Website Login Required</h3>
+              <button
+                id="httpAuthModalCloseBtn"
+                class="password-modal-close"
+                type="button"
+                aria-label="Close"
+                title="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            <form id="httpAuthForm" class="password-form">
+              <div class="password-field" style="grid-column: 1 / -1">
+                <label for="httpAuthMessage">Website</label>
+                <div id="httpAuthMessage" class="password-meta"></div>
+              </div>
+              <div class="password-field">
+                <label for="httpAuthUsernameInput">Username / Email</label>
+                <input id="httpAuthUsernameInput" type="text" required />
+              </div>
+              <div class="password-field">
+                <label for="httpAuthPasswordInput">Password</label>
+                <input id="httpAuthPasswordInput" type="password" required />
+              </div>
+              <div class="password-field" style="grid-column: 1 / -1">
+                <label
+                  style="
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    cursor: pointer;
+                  "
+                >
+                  <input id="httpAuthRememberInput" type="checkbox" checked />
+                  <span>Update saved credential for this profile</span>
+                </label>
+              </div>
+              <button
+                id="httpAuthSubmitBtn"
+                type="submit"
+                class="password-save-btn"
+              >
+                Login
+              </button>
+            </form>
+          </div>
+        </div>
+        <div id="historyManagerModal" class="password-modal hidden">
+          <div class="password-modal-card">
+            <div class="password-modal-header">
+              <h3>Profile History</h3>
+              <button
+                id="historyModalCloseBtn"
+                class="password-modal-close"
+                type="button"
+                aria-label="Close"
+                title="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            <div class="history-toolbar">
+              <div class="password-field history-profile-field">
+                <label for="historyProfileSelect">Profile</label>
+                <div
+                  id="historyProfileSelect"
+                  class="profile-pill-select"
+                ></div>
+              </div>
+              <button
+                id="historyClearBtn"
+                type="button"
+                class="history-clear-btn"
+              >
+                Clear History
+              </button>
+            </div>
+
+            <div id="historyList" class="history-list"></div>
+          </div>
+        </div>
+        <div id="extensionsManagerModal" class="password-modal hidden">
+          <div class="password-modal-card extensions-modal-card">
+            <div class="password-modal-header">
+              <h3>Extensions</h3>
+              <button
+                id="extensionsModalCloseBtn"
+                class="password-modal-close"
+                type="button"
+                aria-label="Close"
+                title="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div class="extensions-toolbar">
+              <p class="extensions-helper-text">
+                Load OneView extensions from an unpacked folder during
+                development. Each extension must include a
+                `oneview-manifest.json` manifest.
+              </p>
+              <button
+                id="extensionsLoadBtn"
+                type="button"
+                class="password-save-btn"
+              >
+                Load Unpacked
+              </button>
+            </div>
+            <div id="extensionsManagerList" class="extensions-list"></div>
+          </div>
+        </div>
+        <div id="extensionDetailsModal" class="password-modal hidden">
+          <div class="password-modal-card extensions-modal-card">
+            <div class="password-modal-header">
+              <h3 id="extensionDetailsTitle">Extension Details</h3>
+              <button
+                id="extensionDetailsCloseBtn"
+                class="password-modal-close"
+                type="button"
+                aria-label="Close"
+                title="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div
+              id="extensionDetailsContent"
+              class="extension-details-content"
+            ></div>
+          </div>
+        </div>
+        <div id="bookmarkModal" class="password-modal hidden">
+          <div class="password-modal-card">
+            <div class="password-modal-header">
+              <h3>Add Bookmark</h3>
+              <button
+                id="bookmarkModalCloseBtn"
+                class="password-modal-close"
+                type="button"
+                aria-label="Close"
+                title="Close"
+              >
+                ×
+              </button>
+            </div>
+            <form id="bookmarkForm" class="password-form">
+              <div class="password-field">
+                <label for="bookmarkTitleInput">Title</label>
+                <input
+                  id="bookmarkTitleInput"
+                  type="text"
+                  placeholder="My Bookmark"
+                  required
+                />
+              </div>
+              <div class="password-field">
+                <label for="bookmarkUrlInput">URL</label>
+                <input
+                  id="bookmarkUrlInput"
+                  type="text"
+                  placeholder="https://example.com"
+                  required
+                />
+              </div>
+              <div class="password-field" style="grid-column: 1 / -1">
+                <label for="bookmarkProfileSelect">Profile</label>
+                <div
+                  id="bookmarkProfileSelect"
+                  class="profile-pill-select"
+                ></div>
+              </div>
+              <button
+                id="bookmarkSaveBtn"
+                type="submit"
+                class="password-save-btn"
+              >
+                Save Bookmark
+              </button>
+            </form>
+          </div>
+        </div>
+        <div id="cacheActionModal" class="password-modal hidden">
+          <div class="password-modal-card action-modal-card">
+            <div class="password-modal-header">
+              <h3 id="cacheActionTitle">Clear Page Cache</h3>
+              <button
+                id="cacheActionCloseBtn"
+                class="password-modal-close"
+                type="button"
+                aria-label="Close"
+                title="Close"
+              >
+                ×
+              </button>
+            </div>
+            <p id="cacheActionMessage" class="action-modal-message"></p>
+            <div class="action-modal-actions">
+              <button
+                id="cacheActionCancelBtn"
+                type="button"
+                class="history-clear-btn"
+              >
+                Cancel
+              </button>
+              <button
+                id="cacheActionConfirmBtn"
+                type="button"
+                class="password-save-btn"
+              >
+                Clear Cache
+              </button>
+            </div>
+          </div>
+        </div>
+        <div
+          id="extensionPromptModal"
+          class="password-modal hidden"
+          aria-hidden="true"
+        >
+          <div
+            class="password-modal-card action-modal-card extension-prompt-card"
+          >
+            <div class="password-modal-header">
+              <h3 id="extensionPromptTitle">Extension Input</h3>
+              <button
+                type="button"
+                id="extensionPromptCloseBtn"
+                class="password-modal-close"
+                title="Close"
+                aria-label="Close"
+              ></button>
+            </div>
+            <div class="password-modal-body">
+              <p id="extensionPromptMessage" class="action-modal-message"></p>
+              <form
+                id="extensionPromptForm"
+                class="password-form"
+                style="margin-top: 16px"
+              >
+                <div class="password-field" style="margin-bottom: 24px">
+                  <label for="extensionPromptInput" id="extensionPromptLabel"
+                    >Value</label
+                  >
+                  <input
+                    type="text"
+                    id="extensionPromptInput"
+                    required
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                  <textarea
+                    id="extensionPromptTextarea"
+                    class="hidden"
+                    rows="5"
+                    autocomplete="off"
+                    spellcheck="false"
+                  ></textarea>
+                </div>
+                <div class="action-modal-actions" style="grid-column: 1 / -1">
+                  <button
+                    type="button"
+                    id="extensionPromptCancelBtn"
+                    class="password-cancel-btn"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    id="extensionPromptSubmitBtn"
+                    class="password-save-btn"
+                  >
+                    Submit
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <!-- Profile Prompt Dialog -->
+        <div
+          id="profilePromptModal"
+          class="password-modal hidden"
+          aria-hidden="true"
+        >
+          <div
+            class="password-modal-card action-modal-card profile-prompt-card"
+          >
+            <div
+              class="password-modal-header"
+              style="
+                justify-content: center;
+                border-bottom: none;
+                padding-bottom: 0;
+              "
+            >
+              <h3 style="font-size: 20px; font-weight: 500">
+                Select a profile to open this link
+              </h3>
+              <button
+                type="button"
+                id="profilePromptCloseBtn"
+                class="password-modal-close"
+                style="position: absolute; right: 16px; top: 16px"
+                title="Close"
+                aria-label="Close"
+              ></button>
+            </div>
+            <div
+              class="password-modal-body"
+              style="text-align: center; padding: 12px 24px 24px"
+            >
+              <div id="profilePromptSelect" class="profile-big-select"></div>
+              <div
+                class="action-modal-actions"
+                style="justify-content: center; margin-top: 24px"
+              >
+                <button
+                  type="button"
+                  id="profilePromptContinueBtn"
+                  class="password-save-btn"
+                  style="
+                    min-width: 120px;
+                    padding: 10px 24px;
+                    border-radius: 999px;
+                    background-color: #0f172a;
+                    color: white;
+                    font-weight: 600;
+                    border: none;
+                    cursor: pointer;
+                  "
+                >
+                  Continue
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="view.js"></script>
+  </body>
+</html>

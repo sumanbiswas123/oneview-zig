@@ -1,0 +1,159 @@
+/* ===================================
+   OneView Theme - Glassmorphism & Aurora
+   =================================== */
+
+:root {
+  /* Dynamic Mesh Palette */
+  --bg-dark: #0f172a;
+  --bg-light: #f8fafc;
+
+  /* These will be updated by class logic or js logic */
+  --bg-current: var(--bg-light);
+  --text-current: var(--text-main);
+
+  --glass-border: rgba(255, 255, 255, 0.4);
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.1);
+
+  --primary: #6366f1;
+  --primary-rgb: 99, 102, 241;
+  --primary-glow: rgba(99, 102, 241, 0.4);
+  --secondary: #ec4899;
+
+  --text-main: #1e293b;
+  --text-muted: #64748b;
+  --text-medium: #475569;
+
+  /* Aurora Colors */
+  --c1: #efd5ff;
+  --c2: #515ada;
+  --c3: #ee756a;
+  --c4: #756aee;
+}
+
+body.dark-mode {
+  --bg-current: #0f111a;
+  --text-current: #f1f5f9;
+  --text-main: #f1f5f9;
+  --text-muted: #94a3b8;
+  --text-medium: #cbd5e1;
+
+  /* Richer Glass Effect for Dark Mode */
+  --glass-bg: rgba(17, 25, 40, 0.75);
+  --glass-border: rgba(255, 255, 255, 0.125);
+  --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+  --primary: #818cf8; /* lighter primary for dark mode */
+}
+
+/* === BACKGROUND EFFECTS === */
+.ambient-light {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: radial-gradient(
+    circle at 10% 20%,
+    rgb(242, 246, 255) 0%,
+    rgb(235, 251, 255) 90%
+  );
+  z-index: -3;
+  transition: opacity 0.5s ease;
+}
+
+body.dark-mode .ambient-light {
+  /* Deep Space Gradient */
+  background: radial-gradient(
+    circle at 20% 30%,
+    #1e1b4b 0%,
+    /* Deep Indigo */ #0f172a 40%,
+    /* Slate 900 */ #020617 100% /* Nearly black */
+  );
+  opacity: 1;
+}
+
+.aurora-overlay {
+  position: fixed;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background:
+    radial-gradient(
+      circle at 50% 50%,
+      rgba(99, 102, 241, 0.15),
+      transparent 60%
+    ),
+    radial-gradient(
+      circle at 80% 20%,
+      rgba(236, 72, 153, 0.15),
+      transparent 50%
+    ),
+    radial-gradient(circle at 20% 80%, rgba(6, 182, 212, 0.15), transparent 50%);
+  /* Reduced from 80px to 50px - significantly less GPU memory & rasterization overhead */
+  filter: blur(50px);
+  /* Animation removed completely - animating a background beneath backdrop-filter elements causes massive Chromium CPU/GPU usage */
+  z-index: -2;
+  pointer-events: none;
+  /* Own compositor layer - isolates repaints from main UI */
+  will-change: transform;
+  /* Prevent aurora from invalidating the whole page layout */
+  contain: strict;
+}
+
+/* Dark Mode Aurora - More Vibrant & Visible */
+body.dark-mode .aurora-overlay {
+  background:
+    radial-gradient(
+      circle at 50% 50%,
+      rgba(129, 140, 248, 0.15),
+      /* Indigo */ transparent 60%
+    ),
+    radial-gradient(
+      circle at 80% 20%,
+      rgba(236, 72, 153, 0.15),
+      /* Pink */ transparent 50%
+    ),
+    radial-gradient(
+      circle at 20% 80%,
+      rgba(34, 211, 238, 0.15),
+      /* Cyan */ transparent 50%
+    ),
+    /* Extra depth */
+    radial-gradient(
+        circle at 90% 90%,
+        rgba(139, 92, 246, 0.12),
+        /* Violet */ transparent 50%
+      );
+  opacity: 0.8;
+}
+
+.noise-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: -1;
+}
+
+@keyframes auroraMove {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  100% {
+    transform: translate(-20px, -20px) rotate(5deg);
+  }
+}
+
+/* === GLASS UTILITIES === */
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  box-shadow: var(--glass-shadow);
+}

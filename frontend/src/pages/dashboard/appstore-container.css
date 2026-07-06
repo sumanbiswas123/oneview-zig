@@ -1,0 +1,162 @@
+/* === APP STORE CONTAINER === */
+.app-store-container {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    135deg,
+    rgb(242, 246, 255) 0%,
+    rgb(235, 251, 255) 50%,
+    rgb(242, 246, 255) 100%
+  );
+  z-index: 9999;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  transition: all 0.3s cubic-bezier(0.2, 0.9, 0.2, 1); /* Smooth transition */
+}
+
+.app-store-container.hidden {
+  display: none;
+}
+
+/* === FULL VIEW MODE === */
+.app-store-container.full-view-mode {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  right: auto !important;
+  bottom: auto !important;
+  border-radius: 0 !important;
+  /* Maintain z-index above content and nav/sidebar */
+  z-index: 100000 !important;
+  background: var(--bg-light, #f8fafc) !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+}
+
+.app-store-container.full-view-mode .app-store-maximize-btn,
+.app-store-container.full-view-mode .app-store-close-btn {
+  top: 5px !important;
+}
+
+/* Hide global window control dots while embedded view is maximized */
+body.app-overlay-maximized .titlebar,
+body.app-overlay-maximized .drag-box {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Close Button */
+.app-store-close-btn {
+  position: absolute;
+  top: 5px;
+  right: 20px;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100000; /* Ensure on top of everything */
+  -webkit-app-region: no-drag;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+}
+
+.app-store-close-btn:hover {
+  color: #ef4444;
+  background: #fef2f2;
+  border-color: #fecaca;
+  transform: scale(1.1);
+  box-shadow: 0 8px 20px rgba(239, 68, 68, 0.15);
+}
+
+/* Maximize Button */
+.app-store-maximize-btn {
+  position: absolute;
+  top: 5px;
+  right: 70px; /* Left of close button */
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--text-muted);
+  cursor: pointer;
+  z-index: 100000;
+  -webkit-app-region: no-drag;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+
+  /* HIDDEN BY DEFAULT (For App Store) */
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+/* SHOW ONLY IN VIEW MODE */
+.app-store-container.view-mode .app-store-maximize-btn {
+  display: flex !important;
+}
+
+.app-store-maximize-btn:hover {
+  color: var(--primary, #6366f1);
+  background: white;
+  transform: scale(1.1);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+}
+
+body.dark-mode .app-store-close-btn,
+body.dark-mode .app-store-maximize-btn {
+  background: rgba(15, 23, 42, 0.6);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+body.dark-mode .app-store-close-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+body.dark-mode .app-store-maximize-btn:hover {
+  background: rgba(99, 102, 241, 0.2);
+  border-color: rgba(99, 102, 241, 0.4);
+}
+
+body.dark-mode .app-store-container {
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+}
+
+#app-store-content {
+  flex: 1;
+  overflow-y: auto;
+  width: 100%;
+  height: 100%;
+  padding: 40px;
+  box-sizing: border-box;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* In full view mode, remove padding from content container to let view handle it */
+/* Use !important to override any legacy styles if they persist */
+/* In full view mode OR when in View Page mode generally, remove padding */
+/* The View page handles its own layout/padding internally */
+.app-store-container.full-view-mode #app-store-content,
+.app-store-container.view-mode #app-store-content {
+  padding: 0 !important;
+}
+
+/* Scrollbar styling */
+#app-store-content::-webkit-scrollbar {
+  display: none;
+}
