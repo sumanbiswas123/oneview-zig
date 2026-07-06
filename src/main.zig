@@ -767,6 +767,8 @@ fn handleConnection(ctx: ConnCtx) void {
                         std.mem.eql(u8, url_path, "/api/list-extensions") or
                         std.mem.eql(u8, url_path, "/api/extension-icon") or
                         std.mem.eql(u8, url_path, "/api/download-progress") or
+                        std.mem.eql(u8, url_path, "/api/remove-extension") or
+                        std.mem.eql(u8, url_path, "/api/toggle-extension") or
                         std.mem.eql(u8, url_path, "/api/install-extension");
 
     if (referer_path != null and !is_real_api) {
@@ -1279,6 +1281,188 @@ fn handleConnection(ctx: ConnCtx) void {
             .{ ext_id, ext_name, std.mem.replaceOwned(u8, allocator, ext_path, "\\", "/") catch ext_path, root_page }
         ) catch "{\"success\":false}";
         defer allocator.free(res_json);
+        sendJson(ctx.sock, res_json);
+        return;
+    }
+
+    if (std.mem.eql(u8, url_path, "/api/remove-extension")) {
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Invalid JSON\"}");
+            return;
+        };
+        defer parsed.deinit();
+        const path_val = parsed.value.object.get("path") orelse {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Missing path\"}");
+            return;
+        };
+        const ext_path = path_val.string;
+
+        const appdata = getEnvVar(allocator, "APPDATA");
+        defer if (appdata.len > 0) allocator.free(appdata);
+        const registry_path = std.fmt.allocPrint(allocator, "{s}\\OneView Dev\\oneview-extensions.v1.json", .{appdata}) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+            return;
+        };
+        defer allocator.free(registry_path);
+        const registry_path_z = allocator.dupeZ(u8, registry_path) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+            return;
+        };
+        defer allocator.free(registry_path_z);
+
+        var registry_list = std.json.Array.init(allocator);
+        defer registry_list.deinit();
+        var existing_registry_parsed: ?std.json.Parsed(std.json.Value) = null;
+        defer if (existing_registry_parsed) |*p| p.deinit();
+
+        if (fopen(registry_path_z, "rb")) |reg_f| {
+            defer _ = fclose(reg_f);
+            _ = fseek(reg_f, 0, 2);
+            const reg_size = ftell(reg_f);
+            if (reg_size > 0) {
+                _ = fseek(reg_f, 0, 0);
+                const reg_raw = allocator.alloc(u8, @intCast(reg_size)) catch {
+                    sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+                    return;
+                };
+                defer allocator.free(reg_raw);
+                _ = fread(reg_raw.ptr, 1, @intCast(reg_size), reg_f);
+                if (std.json.parseFromSlice(std.json.Value, allocator, reg_raw, .{})) |parsed_val| {
+                    existing_registry_parsed = parsed_val;
+                    if (parsed_val.value == .array) {
+                        for (parsed_val.value.array.items) |item| {
+                            registry_list.append(item) catch {};
+                        }
+                    }
+                } else |_| {}
+            }
+        }
+
+        var idx: usize = 0;
+        var removed = false;
+        while (idx < registry_list.items.len) {
+            const item = registry_list.items[idx];
+            if (item == .object) {
+                if (item.object.get("path")) |p| {
+                    if (std.mem.eql(u8, p.string, ext_path)) {
+                        _ = registry_list.orderedRemove(idx);
+                        removed = true;
+                        continue;
+                    }
+                }
+            }
+            idx += 1;
+        }
+
+        if (removed) {
+            const out_string = std.json.Stringify.valueAlloc(allocator, std.json.Value{ .array = registry_list }, .{}) catch "";
+            defer if (out_string.len > 0) allocator.free(out_string);
+            if (out_string.len > 0) {
+                if (fopen(registry_path_z, "wb")) |reg_out| {
+                    defer _ = fclose(reg_out);
+                    _ = fwrite(out_string.ptr, 1, out_string.len, reg_out);
+                }
+            }
+        }
+
+        const entries_string = std.json.Stringify.valueAlloc(allocator, std.json.Value{ .array = registry_list }, .{}) catch "[]";
+        defer if (entries_string.ptr != "[]".ptr) allocator.free(entries_string);
+        const res_json = std.fmt.allocPrint(allocator, "{{\"success\":true,\"entries\":{s}}}", .{entries_string}) catch "{\"success\":false}";
+        defer if (res_json.ptr != "{\"success\":false}".ptr) allocator.free(res_json);
+        sendJson(ctx.sock, res_json);
+        return;
+    }
+
+    if (std.mem.eql(u8, url_path, "/api/toggle-extension")) {
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Invalid JSON\"}");
+            return;
+        };
+        defer parsed.deinit();
+        const path_val = parsed.value.object.get("path") orelse {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Missing path\"}");
+            return;
+        };
+        const enabled_val = parsed.value.object.get("enabled") orelse {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Missing enabled\"}");
+            return;
+        };
+        const ext_path = path_val.string;
+        const ext_enabled = enabled_val.bool;
+
+        const appdata = getEnvVar(allocator, "APPDATA");
+        defer if (appdata.len > 0) allocator.free(appdata);
+        const registry_path = std.fmt.allocPrint(allocator, "{s}\\OneView Dev\\oneview-extensions.v1.json", .{appdata}) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+            return;
+        };
+        defer allocator.free(registry_path);
+        const registry_path_z = allocator.dupeZ(u8, registry_path) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+            return;
+        };
+        defer allocator.free(registry_path_z);
+
+        var registry_list = std.json.Array.init(allocator);
+        defer registry_list.deinit();
+        var existing_registry_parsed: ?std.json.Parsed(std.json.Value) = null;
+        defer if (existing_registry_parsed) |*p| p.deinit();
+
+        if (fopen(registry_path_z, "rb")) |reg_f| {
+            defer _ = fclose(reg_f);
+            _ = fseek(reg_f, 0, 2);
+            const reg_size = ftell(reg_f);
+            if (reg_size > 0) {
+                _ = fseek(reg_f, 0, 0);
+                const reg_raw = allocator.alloc(u8, @intCast(reg_size)) catch {
+                    sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+                    return;
+                };
+                defer allocator.free(reg_raw);
+                _ = fread(reg_raw.ptr, 1, @intCast(reg_size), reg_f);
+                if (std.json.parseFromSlice(std.json.Value, allocator, reg_raw, .{})) |parsed_val| {
+                    existing_registry_parsed = parsed_val;
+                    if (parsed_val.value == .array) {
+                        for (parsed_val.value.array.items) |item| {
+                            registry_list.append(item) catch {};
+                        }
+                    }
+                } else |_| {}
+            }
+        }
+
+        var idx: usize = 0;
+        var updated = false;
+        while (idx < registry_list.items.len) {
+            var item = registry_list.items[idx];
+            if (item == .object) {
+                if (item.object.get("path")) |p| {
+                    if (std.mem.eql(u8, p.string, ext_path)) {
+                        item.object.put(allocator, "enabled", std.json.Value{ .bool = ext_enabled }) catch {};
+                        registry_list.items[idx] = item;
+                        updated = true;
+                        break;
+                    }
+                }
+            }
+            idx += 1;
+        }
+
+        if (updated) {
+            const out_string = std.json.Stringify.valueAlloc(allocator, std.json.Value{ .array = registry_list }, .{}) catch "";
+            defer if (out_string.len > 0) allocator.free(out_string);
+            if (out_string.len > 0) {
+                if (fopen(registry_path_z, "wb")) |reg_out| {
+                    defer _ = fclose(reg_out);
+                    _ = fwrite(out_string.ptr, 1, out_string.len, reg_out);
+                }
+            }
+        }
+
+        const entries_string = std.json.Stringify.valueAlloc(allocator, std.json.Value{ .array = registry_list }, .{}) catch "[]";
+        defer if (entries_string.ptr != "[]".ptr) allocator.free(entries_string);
+        const res_json = std.fmt.allocPrint(allocator, "{{\"success\":true,\"entries\":{s}}}", .{entries_string}) catch "{\"success\":false}";
+        defer if (res_json.ptr != "{\"success\":false}".ptr) allocator.free(res_json);
         sendJson(ctx.sock, res_json);
         return;
     }
@@ -2386,31 +2570,44 @@ const INIT_SCRIPT =
     \\      const r = await fetch('http://127.0.0.1:9731/api/list-extensions');
     \\      const res = await r.json();
     \\      if (res && Array.isArray(res.entries)) {
-    \\        res.entries = res.entries.map(entry => {
-    \\          const name = entry.manifestName || 'Unnamed Extension';
-    \\          const iconPath = 'assets/icon.svg';
-    \\          const iconUrl = entry.path ? 'http://127.0.0.1:9731/api/extension-icon?path=' + encodeURIComponent(entry.path) : '';
+    \\        const enriched = [];
+    \\        for (const entry of res.entries) {
+    \\          let manifest = { entrypoints: { popup: 'popup.html', root: 'result.html' } };
+    \\          let iconFile = 'assets/icon.svg';
+    \\          try {
+    \\            const manifestRes = await fetch('http://127.0.0.1:9731/api/extension-icon?path=' + encodeURIComponent(entry.path) + '&file=oneview-manifest.json');
+    \\            if (manifestRes.ok) {
+    \\              const m = await manifestRes.json();
+    \\              if (m) {
+    \\                manifest = m;
+    \\                if (m.icons) {
+    \\                  iconFile = m.icons['48'] || m.icons['16'] || m.icons['128'] || iconFile;
+    \\                }
+    \\              }
+    \\            }
+    \\          } catch(e) { console.warn("Failed to fetch manifest for", entry.path, e); }
+    \\          
+    \\          const name = entry.manifestName || manifest.name || 'Unnamed Extension';
+    \\          const iconUrl = entry.path ? 'http://127.0.0.1:9731/api/extension-icon?path=' + encodeURIComponent(entry.path) + '&file=' + encodeURIComponent(iconFile) : '';
     \\          const pathUrl = entry.path ? entry.path.replace(/\\/g, '/') : '';
-    \\          const popupUrl = pathUrl ? 'http://127.0.0.1:9731/api/extension-icon?path=' + encodeURIComponent(entry.path) + '&file=popup.html' : '';
-    \\          const optionsUrl = pathUrl ? 'http://127.0.0.1:9731/api/extension-icon?path=' + encodeURIComponent(entry.path) + '&file=options.html' : '';
-    \\          return {
+    \\          
+    \\          const popupUrl = pathUrl ? 'http://127.0.0.1:9731/api/extension-icon?path=' + encodeURIComponent(entry.path) + '&file=' + encodeURIComponent(manifest.entrypoints?.popup || 'popup.html') : '';
+    \\          const optionsUrl = pathUrl ? 'http://127.0.0.1:9731/api/extension-icon?path=' + encodeURIComponent(entry.path) + '&file=' + encodeURIComponent(manifest.entrypoints?.options || 'options.html') : '';
+    \\          
+    \\          enriched.push({
     \\            ...entry,
     \\            name: name,
     \\            actionTitle: name,
-    \\            actionIconPath: iconPath,
+    \\            actionIconPath: iconFile,
     \\            actionIconFileUrl: iconUrl,
     \\            popupUrl: popupUrl,
     \\            optionsUrl: optionsUrl,
     \\            enabled: entry.enabled !== false,
     \\            exists: true,
-    \\            manifest: {
-    \\              entrypoints: {
-    \\                popup: 'popup.html',
-    \\                root: 'result.html'
-    \\              }
-    \\            }
-    \\          };
-    \\        });
+    \\            manifest: manifest
+    \\          });
+    \\        }
+    \\        res.entries = enriched;
     \\      }
     \\      return res;
     \\    } catch(e) { return { success: false, entries: [] }; }
@@ -2468,9 +2665,27 @@ const INIT_SCRIPT =
     \\    if (container) container.classList.add('hidden');
     \\    return { success: true };
     \\  };
-    \\  window.api.removeBrowserExtension = window.api.removeBrowserExtension || async function() { return { success: false }; };
-    \\  window.api.toggleBrowserExtension = window.api.toggleBrowserExtension || async function() { return { success: false }; };
-    \\  window.api.reloadBrowserExtension = window.api.reloadBrowserExtension || async function() { return { success: false }; };
+    \\  window.api.removeBrowserExtension = window.api.removeBrowserExtension || async function(opts) {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/remove-extension', {
+    \\        method: 'POST',
+    \\        headers: { 'Content-Type': 'application/json' },
+    \\        body: JSON.stringify(opts),
+    \\      });
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false, message: e.message }; }
+    \\  };
+    \\  window.api.toggleBrowserExtension = window.api.toggleBrowserExtension || async function(opts) {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/toggle-extension', {
+    \\        method: 'POST',
+    \\        headers: { 'Content-Type': 'application/json' },
+    \\        body: JSON.stringify(opts),
+    \\      });
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false, message: e.message }; }
+    \\  };
+    \\  window.api.reloadBrowserExtension = window.api.reloadBrowserExtension || async function() { return { success: true }; };
 
     \\
     \\  // ── window.oneviewExtension and window.oneview bridge ────────────────────────

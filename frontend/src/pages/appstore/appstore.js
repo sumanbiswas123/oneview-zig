@@ -2151,7 +2151,14 @@ async function installApp(app, options = {}) {
           });
           finalPath = extractPath; // Web app root becomes the extracted folder
 
-          // Cleanup zip? Maybe keep it for cache. For now keep it.
+          // Cleanup zip after successful extraction
+          if (window.api?.deletePath) {
+            try {
+              await window.api.deletePath(targetPath);
+            } catch (cleanupErr) {
+              console.warn("Failed to clean up zip installer:", cleanupErr);
+            }
+          }
 
           // If it's a web app, we point to this folder
           // BUT: Sometimes zip extracts to a subfolder.
