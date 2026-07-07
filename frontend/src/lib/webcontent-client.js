@@ -301,6 +301,7 @@ function attachControllerMethods(el, ctrl) {
     "page-title-updated",
     "did-navigate",
     "did-navigate-in-page",
+    "history-changed",
     "will-navigate",
     "new-window",
     "destroyed",

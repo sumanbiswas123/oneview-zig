@@ -37,6 +37,9 @@ extern "c" fn child_webview_detach(handle: ?*anyopaque, title_utf8: [*:0]const u
 extern "c" fn child_webview_attach(handle: ?*anyopaque) void;
 extern "c" fn child_webview_open_devtools(handle: ?*anyopaque) void;
 extern "c" fn child_webview_clear_data(handle: ?*anyopaque, origin_utf8: [*:0]const u8, types_utf8: [*:0]const u8) void;
+extern "c" fn child_webview_go_back(handle: ?*anyopaque) void;
+extern "c" fn child_webview_go_forward(handle: ?*anyopaque) void;
+extern "c" fn child_webview_reload(handle: ?*anyopaque) void;
 
 
 // ─── Native file operations (WinINet download, Shell32 unzip, SHFileOperation delete) ──
@@ -2961,6 +2964,69 @@ fn nativeWebcontentCall(req: EasyApp.Request) anyerror!void {
         }
         req.resolveWith("{\"success\":true}");
 
+    } else if (std.mem.eql(u8, method, "go-back")) {
+        if (app.child_views.getPtr(key)) |view_ptr| {
+            if (view_ptr.cpp_handle) |h| {
+                const CmdCtx = struct {
+                    cpp_handle: ?*anyopaque,
+                };
+                const cctx = try app.allocator.create(CmdCtx);
+                cctx.cpp_handle = h;
+                const GoBack = struct {
+                    fn cb(wv: *Webview, arg: ?*anyopaque) void {
+                        _ = wv;
+                        const cc = @as(*CmdCtx, @ptrCast(@alignCast(arg.?)));
+                        defer g_app_ptr.?.allocator.destroy(cc);
+                        child_webview_go_back(cc.cpp_handle);
+                    }
+                };
+                try req.easy.w.dispatchRaw(GoBack.cb, cctx);
+            }
+        }
+        req.resolveWith("{\"success\":true}");
+
+    } else if (std.mem.eql(u8, method, "go-forward")) {
+        if (app.child_views.getPtr(key)) |view_ptr| {
+            if (view_ptr.cpp_handle) |h| {
+                const CmdCtx = struct {
+                    cpp_handle: ?*anyopaque,
+                };
+                const cctx = try app.allocator.create(CmdCtx);
+                cctx.cpp_handle = h;
+                const GoForward = struct {
+                    fn cb(wv: *Webview, arg: ?*anyopaque) void {
+                        _ = wv;
+                        const cc = @as(*CmdCtx, @ptrCast(@alignCast(arg.?)));
+                        defer g_app_ptr.?.allocator.destroy(cc);
+                        child_webview_go_forward(cc.cpp_handle);
+                    }
+                };
+                try req.easy.w.dispatchRaw(GoForward.cb, cctx);
+            }
+        }
+        req.resolveWith("{\"success\":true}");
+
+    } else if (std.mem.eql(u8, method, "reload")) {
+        if (app.child_views.getPtr(key)) |view_ptr| {
+            if (view_ptr.cpp_handle) |h| {
+                const CmdCtx = struct {
+                    cpp_handle: ?*anyopaque,
+                };
+                const cctx = try app.allocator.create(CmdCtx);
+                cctx.cpp_handle = h;
+                const Reload = struct {
+                    fn cb(wv: *Webview, arg: ?*anyopaque) void {
+                        _ = wv;
+                        const cc = @as(*CmdCtx, @ptrCast(@alignCast(arg.?)));
+                        defer g_app_ptr.?.allocator.destroy(cc);
+                        child_webview_reload(cc.cpp_handle);
+                    }
+                };
+                try req.easy.w.dispatchRaw(Reload.cb, cctx);
+            }
+        }
+        req.resolveWith("{\"success\":true}");
+
     } else if (std.mem.eql(u8, method, "hide")) {
         if (app.child_views.getPtr(key)) |view_ptr| {
             view_ptr.last_visible = false;
@@ -4030,9 +4096,11 @@ fn onChildWebviewMessage(key_ptr: [*:0]const u8, message_ptr: [*:0]const u8) cal
             if (payload_val.object.get("url")) |url_val| {
                 if (url_val == .string) {
                     const url = url_val.string;
+                    const can_back = if (payload_val.object.get("canGoBack")) |cb| cb.bool else false;
+                    const can_forward = if (payload_val.object.get("canGoForward")) |cf| cf.bool else false;
                     const eval_js = std.fmt.allocPrint(allocator,
-                        "window._wcEmit && window._wcEmit('{s}', 'did-navigate', {{ url: '{s}' }});",
-                        .{ key, url }
+                        "window._wcEmit && window._wcEmit('{s}', 'did-navigate', {{ url: '{s}', canGoBack: {}, canGoForward: {} }});",
+                        .{ key, url, can_back, can_forward }
                     ) catch return;
                     defer allocator.free(eval_js);
                     const eval_js_z = allocator.dupeZ(u8, eval_js) catch return;
@@ -4041,6 +4109,22 @@ fn onChildWebviewMessage(key_ptr: [*:0]const u8, message_ptr: [*:0]const u8) cal
                         main_wv.eval(eval_js_z) catch {};
                     }
                 }
+            }
+        }
+    } else if (std.mem.eql(u8, method, "history-changed")) {
+        if (payload_val == .object) {
+            const url = if (payload_val.object.get("url")) |uv| uv.string else "";
+            const can_back = if (payload_val.object.get("canGoBack")) |cb| cb.bool else false;
+            const can_forward = if (payload_val.object.get("canGoForward")) |cf| cf.bool else false;
+            const eval_js = std.fmt.allocPrint(allocator,
+                "window._wcEmit && window._wcEmit('{s}', 'history-changed', {{ url: '{s}', canGoBack: {}, canGoForward: {} }});",
+                .{ key, url, can_back, can_forward }
+            ) catch return;
+            defer allocator.free(eval_js);
+            const eval_js_z = allocator.dupeZ(u8, eval_js) catch return;
+            defer allocator.free(eval_js_z);
+            if (app.main_webview) |main_wv| {
+                main_wv.eval(eval_js_z) catch {};
             }
         }
     }

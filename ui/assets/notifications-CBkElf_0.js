@@ -1,1 +1,0 @@
-function r(o,s="error",n=4e3){const e=document.getElementById("toast-container");if(!e)return;const t=document.createElement("div");t.className=`toast ${s}`,t.textContent=o,t.setAttribute("role","status"),e.appendChild(t),setTimeout(()=>{t.classList.add("removing"),setTimeout(()=>{t.parentNode&&t.parentNode.removeChild(t)},200)},n)}export{r as s};

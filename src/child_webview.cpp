@@ -337,7 +337,15 @@ public:
             char* url_utf8 = new char[len];
             WideCharToMultiByte(CP_UTF8, 0, url, -1, url_utf8, len, NULL, NULL);
 
-            std::string msg = "{\"method\":\"source-changed\",\"payload\":{\"url\":\"" + std::string(url_utf8) + "\"}}";
+            BOOL canBack = FALSE;
+            BOOL canForward = FALSE;
+            sender->get_CanGoBack(&canBack);
+            sender->get_CanGoForward(&canForward);
+            std::string canBackStr = canBack ? "true" : "false";
+            std::string canForwardStr = canForward ? "true" : "false";
+
+            std::string msg = "{\"method\":\"source-changed\",\"payload\":{\"url\":\"" + std::string(url_utf8) + 
+                              "\",\"canGoBack\":" + canBackStr + ",\"canGoForward\":" + canForwardStr + "}}";
 
             if (g_message_callback) {
                 g_message_callback(m_key.c_str(), msg.c_str());
@@ -345,6 +353,62 @@ public:
 
             delete[] url_utf8;
             CoTaskMemFree(url);
+        }
+        return S_OK;
+    }
+};
+
+static const GUID Local_IID_ICoreWebView2HistoryChangedEventHandler = 
+    { 0xC79A420C, 0xEFD9, 0x4058, { 0x92, 0x95, 0x3E, 0x8B, 0x4B, 0xCA, 0xB6, 0x45 } };
+
+class HistoryChangedHandler : public ICoreWebView2HistoryChangedEventHandler {
+private:
+    ULONG m_refCount = 1;
+    std::string m_key;
+public:
+    HistoryChangedHandler(const std::string& key) : m_key(key) {}
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObject) override {
+        if (!ppvObject) return E_POINTER;
+        if (riid == IID_IUnknown || riid == Local_IID_ICoreWebView2HistoryChangedEventHandler) {
+            *ppvObject = this;
+            AddRef();
+            return S_OK;
+        }
+        *ppvObject = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&m_refCount); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        ULONG count = InterlockedDecrement(&m_refCount);
+        if (count == 0) delete this;
+        return count;
+    }
+    HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2* sender, IUnknown* args) override {
+        BOOL canBack = FALSE;
+        BOOL canForward = FALSE;
+        sender->get_CanGoBack(&canBack);
+        sender->get_CanGoForward(&canForward);
+        
+        LPWSTR url = nullptr;
+        std::string url_str = "";
+        if (SUCCEEDED(sender->get_Source(&url)) && url) {
+            int len = WideCharToMultiByte(CP_UTF8, 0, url, -1, NULL, 0, NULL, NULL);
+            char* url_utf8 = new char[len];
+            WideCharToMultiByte(CP_UTF8, 0, url, -1, url_utf8, len, NULL, NULL);
+            url_str = url_utf8;
+            delete[] url_utf8;
+            CoTaskMemFree(url);
+        }
+
+        std::string canBackStr = canBack ? "true" : "false";
+        std::string canForwardStr = canForward ? "true" : "false";
+
+        std::string msg = "{\"method\":\"history-changed\",\"payload\":{\"url\":\"" + url_str + 
+                          "\",\"canGoBack\":" + canBackStr + ",\"canGoForward\":" + canForwardStr + "}}";
+
+        if (g_message_callback) {
+            g_message_callback(m_key.c_str(), msg.c_str());
         }
         return S_OK;
     }
@@ -583,6 +647,11 @@ public:
         SourceChangedHandler* srcHandler = new SourceChangedHandler(m_parent->key);
         m_parent->webview->add_SourceChanged(srcHandler, nullptr);
         srcHandler->Release();
+
+        // Register HistoryChanged handler
+        HistoryChangedHandler* histHandler = new HistoryChangedHandler(m_parent->key);
+        m_parent->webview->add_HistoryChanged(histHandler, nullptr);
+        histHandler->Release();
 
         // Natively inject credential auto-capture listeners on document creation
         // This is lightweight, silent, and works on all domains (single & multi-step)
@@ -1172,6 +1241,30 @@ extern "C" {
         MoveWindow(self->hwnd, r.left, r.top, r.right - r.left, r.bottom - r.top, TRUE);
         if (self->controller) {
             self->controller->put_Bounds(r);
+        }
+    }
+
+    __declspec(dllexport) void child_webview_go_back(void* handle) {
+        if (!handle) return;
+        ChildWebView* self = (ChildWebView*)handle;
+        if (self && self->webview) {
+            self->webview->GoBack();
+        }
+    }
+
+    __declspec(dllexport) void child_webview_go_forward(void* handle) {
+        if (!handle) return;
+        ChildWebView* self = (ChildWebView*)handle;
+        if (self && self->webview) {
+            self->webview->GoForward();
+        }
+    }
+
+    __declspec(dllexport) void child_webview_reload(void* handle) {
+        if (!handle) return;
+        ChildWebView* self = (ChildWebView*)handle;
+        if (self && self->webview) {
+            self->webview->Reload();
         }
     }
 

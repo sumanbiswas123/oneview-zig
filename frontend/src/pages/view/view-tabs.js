@@ -154,6 +154,18 @@ export function createViewTabsManager({
     if (display) display.value = str;
   }
 
+  function updateNavigationButtons() {
+    const backBtn = document.getElementById("browserBack");
+    const forwardBtn = document.getElementById("browserForward");
+    const activeWv = getActiveWebview();
+    if (backBtn) {
+      backBtn.disabled = activeWv ? !activeWv.canGoBack() : true;
+    }
+    if (forwardBtn) {
+      forwardBtn.disabled = activeWv ? !activeWv.canGoForward() : true;
+    }
+  }
+
   function stopWebviewBackgroundTasks(webview) {
     if (!webview) return;
     if (webview._oneviewCredentialPollId) {
@@ -540,6 +552,7 @@ export function createViewTabsManager({
     }
     syncWebviewActivity(tab.id);
     refreshBrowserExtensionsUi();
+    updateNavigationButtons();
   }
 
   function shouldPoolTabWebview(tab) {
@@ -954,7 +967,10 @@ export function createViewTabsManager({
       boundTab.url = currentUrl;
       if (boundTab.id === getActiveTabId()) {
         updateUrlDisplay(currentUrl);
+        updateNavigationButtons();
       }
+      const historyProfileId = resolveProfileIdForTab(boundTab);
+      trackProfileHistory(historyProfileId, currentUrl, wv.getTitle() || boundTab.title || "");
     });
 
     wv.addEventListener("did-navigate-in-page", async (event) => {
@@ -966,7 +982,18 @@ export function createViewTabsManager({
       boundTab.url = currentUrl;
       if (boundTab.id === getActiveTabId()) {
         updateUrlDisplay(currentUrl);
+        updateNavigationButtons();
       }
+
+      const historyProfileId = resolveProfileIdForTab(boundTab);
+      trackProfileHistory(historyProfileId, currentUrl, wv.getTitle() || boundTab.title || "");
+
+      wv.addEventListener("history-changed", (e) => {
+        _ = e;
+        if (boundTab.id === getActiveTabId()) {
+          updateNavigationButtons();
+        }
+      });
 
       boundTab.credentialAutomationEnabled = shouldEnableCredentialAutomation(
         currentUrl,

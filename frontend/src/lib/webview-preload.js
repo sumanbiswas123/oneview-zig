@@ -462,12 +462,13 @@ function installHostContextMenuBridge() {
         payload.editFlags.canSelectAll = value.length > 0;
       }
 
-      event.preventDefault();
-      event.stopPropagation();
-      if (typeof event.stopImmediatePropagation === "function") {
-        event.stopImmediatePropagation();
-      }
-      ipcRenderer.invoke("show-webcontent-context-menu", payload).catch(() => {});
+      // Restored default context menu to allow standard browser right-click actions (copy, paste, inspect)
+      // event.preventDefault();
+      // event.stopPropagation();
+      // if (typeof event.stopImmediatePropagation === "function") {
+      //   event.stopImmediatePropagation();
+      // }
+      // ipcRenderer.invoke("show-webcontent-context-menu", payload).catch(() => {});
     },
     true,
   );
