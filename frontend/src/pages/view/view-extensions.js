@@ -367,7 +367,7 @@ export function createViewExtensionsManager({
                             ? `<button type="button" data-download-id="${escapeHtml(entry.id)}" data-download-action="open">Open</button>`
                             : ""
                         }
-                        <button type="button" data-download-id="${escapeHtml(entry.id)}" data-download-action="remove">Remove</button>
+                         <button type="button" data-download-id="${escapeHtml(entry.id)}" data-download-action="remove">Delete</button>
                       </div>
                     </div>
                   `;

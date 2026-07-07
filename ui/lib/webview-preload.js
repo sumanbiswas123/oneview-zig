@@ -49,6 +49,10 @@ const ipcRenderer = {
           return { success: res.success, result: res.result || { dataUrl: res.dataUrl, width: res.width, height: res.height, mode: res.mode } };
         }
       }
+      if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === "function") {
+        window.chrome.webview.postMessage(JSON.stringify({ method: channel, payload }));
+        return { success: true };
+      }
       console.warn(`[Zero-Native Bridge] window.zero.invoke is unavailable for channel: ${channel}`);
       return { success: false, message: "Bridge unavailable" };
     } catch (err) {

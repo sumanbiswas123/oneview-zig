@@ -244,7 +244,7 @@ import"./modulepreload-polyfill-B5Qt9EMX.js";/* empty css              *//* empt
                         ${O==="interrupted"||O==="cancelled"?`<button type="button" data-download-id="${t(u.id)}" data-download-action="retry">Retry</button>`:""}
                         ${u.savePath?`<button type="button" data-download-id="${t(u.id)}" data-download-action="show">Show in Folder</button>`:""}
                         ${O==="completed"&&u.existsOnDisk?`<button type="button" data-download-id="${t(u.id)}" data-download-action="open">Open</button>`:""}
-                        <button type="button" data-download-id="${t(u.id)}" data-download-action="remove">Remove</button>
+                         <button type="button" data-download-id="${t(u.id)}" data-download-action="remove">Delete</button>
                       </div>
                     </div>
                   `}).join(""):'<div class="downloads-manager-empty">No downloads yet.</div>'}

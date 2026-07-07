@@ -40,6 +40,9 @@ extern "c" fn child_webview_clear_data(handle: ?*anyopaque, origin_utf8: [*:0]co
 extern "c" fn child_webview_go_back(handle: ?*anyopaque) void;
 extern "c" fn child_webview_go_forward(handle: ?*anyopaque) void;
 extern "c" fn child_webview_reload(handle: ?*anyopaque) void;
+extern "c" fn child_webview_pause_download(id: [*:0]const u8) void;
+extern "c" fn child_webview_resume_download(id: [*:0]const u8) void;
+extern "c" fn child_webview_cancel_download(id: [*:0]const u8) void;
 
 
 // ─── Native file operations (WinINet download, Shell32 unzip, SHFileOperation delete) ──
@@ -277,6 +280,22 @@ fn applyViewBounds(main_window_hwnd: ?*anyopaque, view: ContentView) void {
 }
 
 // ─── App context ─────────────────────────────────────────────────────────────
+const ManagedDownload = struct {
+    id: []const u8,
+    fileName: []const u8,
+    state: []const u8, // "progressing" | "completed" | "cancelled" | "interrupted"
+    progress: f64,
+    receivedBytes: i64,
+    totalBytes: i64,
+    bytesPerSecond: i64,
+    etaSeconds: f64,
+    paused: bool,
+    savePath: []const u8,
+    existsOnDisk: bool,
+    last_update_time: i64,
+    last_bytes: i64,
+};
+
 pub const App = struct {
     allocator: std.mem.Allocator,
     ping_count: u32 = 0,
@@ -284,6 +303,7 @@ pub const App = struct {
     child_views: std.StringHashMap(ContentView),
     main_webview: ?*Webview = null,
     pending_startup_arg: ?[]const u8 = null,
+    managed_downloads: std.ArrayList(ManagedDownload),
 
     pub fn init(allocator: std.mem.Allocator) App {
         return .{
@@ -291,6 +311,7 @@ pub const App = struct {
             .child_views = std.StringHashMap(ContentView).init(allocator),
             .main_webview = null,
             .pending_startup_arg = null,
+            .managed_downloads = std.ArrayList(ManagedDownload).empty,
         };
     }
 };
@@ -784,6 +805,8 @@ fn handleConnection(ctx: ConnCtx) void {
                         std.mem.eql(u8, url_path, "/api/clear-webview-page-cache") or
                         std.mem.eql(u8, url_path, "/api/clear-webview-user-data") or
                         std.mem.eql(u8, url_path, "/api/toggle-webview-dev-tools") or
+                        std.mem.eql(u8, url_path, "/api/list-managed-downloads") or
+                        std.mem.eql(u8, url_path, "/api/run-managed-download-action") or
                         std.mem.eql(u8, url_path, "/api/install-extension");
 
     if (referer_path != null and !is_real_api) {
@@ -949,6 +972,154 @@ fn handleConnection(ctx: ConnCtx) void {
         defer allocator.free(path_z);
         const rc = native_download_file(url_z, path_z);
         sendJson(ctx.sock, if (rc == 0) "{\"success\":true}" else "{\"success\":false,\"message\":\"Download failed\"}");
+        return;
+    }
+
+    if (std.mem.eql(u8, url_path, "/api/list-managed-downloads")) {
+        const app = g_app_ptr orelse { sendJson(ctx.sock, "{\"success\":false,\"message\":\"App null\"}"); return; };
+        var buf = std.ArrayList(u8).empty;
+        defer buf.deinit(allocator);
+
+        buf.appendSlice(allocator, "{\"success\":true,\"downloads\":[") catch return;
+        for (app.managed_downloads.items, 0..) |item, idx| {
+            if (idx > 0) buf.appendSlice(allocator, ",") catch return;
+            var escaped_path = std.ArrayList(u8).empty;
+            defer escaped_path.deinit(allocator);
+            for (item.savePath) |c| {
+                if (c == '\\') {
+                    escaped_path.appendSlice(allocator, "\\\\") catch {};
+                } else {
+                    escaped_path.append(allocator, c) catch {};
+                }
+            }
+
+            const item_str = std.fmt.allocPrint(allocator,
+                "{{\"id\":\"{s}\",\"fileName\":\"{s}\",\"state\":\"{s}\",\"progress\":{d:.1},\"receivedBytes\":{d},\"totalBytes\":{d},\"bytesPerSecond\":{d},\"etaSeconds\":{d:.1},\"paused\":{},\"savePath\":\"{s}\",\"existsOnDisk\":{}}}",
+                .{ item.id, item.fileName, item.state, item.progress, item.receivedBytes, item.totalBytes, item.bytesPerSecond, item.etaSeconds, item.paused, escaped_path.items, item.existsOnDisk }
+            ) catch continue;
+            defer allocator.free(item_str);
+            buf.appendSlice(allocator, item_str) catch return;
+        }
+        buf.appendSlice(allocator, "]}") catch return;
+
+        sendJson(ctx.sock, buf.items);
+        return;
+    }
+
+    if (std.mem.eql(u8, url_path, "/api/run-managed-download-action")) {
+        const app = g_app_ptr orelse { sendJson(ctx.sock, "{\"success\":false,\"message\":\"App null\"}"); return; };
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Invalid JSON\"}");
+            return;
+        };
+        defer parsed.deinit();
+        const action_val = parsed.value.object.get("action") orelse {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Missing action\"}");
+            return;
+        };
+        const action = action_val.string;
+
+        if (std.mem.eql(u8, action, "clear-completed")) {
+            var i: usize = 0;
+            while (i < app.managed_downloads.items.len) {
+                const item = app.managed_downloads.items[i];
+                if (std.mem.eql(u8, item.state, "completed") or std.mem.eql(u8, item.state, "cancelled") or std.mem.eql(u8, item.state, "interrupted")) {
+                    allocator.free(item.id);
+                    allocator.free(item.fileName);
+                    allocator.free(item.state);
+                    allocator.free(item.savePath);
+                    _ = app.managed_downloads.orderedRemove(i);
+                } else {
+                    i += 1;
+                }
+            }
+            broadcastDownloadsToUi(app);
+            sendJson(ctx.sock, "{\"success\":true}");
+            return;
+        }
+
+        const id_val = parsed.value.object.get("id") orelse {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Missing id\"}");
+            return;
+        };
+        const id = id_val.string;
+
+        var found_idx: ?usize = null;
+        for (app.managed_downloads.items, 0..) |item, idx| {
+            if (std.mem.eql(u8, item.id, id)) {
+                found_idx = idx;
+                break;
+            }
+        }
+
+        if (found_idx) |idx| {
+            const item = &app.managed_downloads.items[idx];
+            if (std.mem.eql(u8, action, "pause")) {
+                const id_z = allocator.dupeZ(u8, id) catch return;
+                defer allocator.free(id_z);
+                child_webview_pause_download(id_z);
+                item.paused = true;
+            } else if (std.mem.eql(u8, action, "resume")) {
+                const id_z = allocator.dupeZ(u8, id) catch return;
+                defer allocator.free(id_z);
+                child_webview_resume_download(id_z);
+                item.paused = false;
+            } else if (std.mem.eql(u8, action, "cancel")) {
+                const id_z = allocator.dupeZ(u8, id) catch return;
+                defer allocator.free(id_z);
+                child_webview_cancel_download(id_z);
+                item.state = "cancelled";
+            } else if (std.mem.eql(u8, action, "remove")) {
+                const id_z = allocator.dupeZ(u8, id) catch return;
+                defer allocator.free(id_z);
+                child_webview_cancel_download(id_z);
+
+                // Delete file from disk if it exists
+                const path_z = allocator.dupeZ(u8, item.savePath) catch return;
+                defer allocator.free(path_z);
+                _ = native_delete_path(path_z);
+
+                allocator.free(item.id);
+                allocator.free(item.fileName);
+                allocator.free(item.state);
+                allocator.free(item.savePath);
+                _ = app.managed_downloads.orderedRemove(idx);
+            } else if (std.mem.eql(u8, action, "open")) {
+                const path_z = allocator.dupeZ(u8, item.savePath) catch return;
+                defer allocator.free(path_z);
+                const shell32 = struct {
+                    extern "shell32" fn ShellExecuteA(
+                        hwnd: ?*anyopaque,
+                        lpOperation: ?[*:0]const u8,
+                        lpFile: [*:0]const u8,
+                        lpParameters: ?[*:0]const u8,
+                        lpDirectory: ?[*:0]const u8,
+                        nShowCmd: c_int
+                    ) callconv(.winapi) ?*anyopaque;
+                };
+                _ = shell32.ShellExecuteA(null, "open", path_z.ptr, null, null, 5);
+            } else if (std.mem.eql(u8, action, "show")) {
+                const params = std.fmt.allocPrint(allocator, "/select,\"{s}\"", .{item.savePath}) catch return;
+                defer allocator.free(params);
+                const params_z = allocator.dupeZ(u8, params) catch return;
+                defer allocator.free(params_z);
+
+                const shell32 = struct {
+                    extern "shell32" fn ShellExecuteA(
+                        hwnd: ?*anyopaque,
+                        lpOperation: ?[*:0]const u8,
+                        lpFile: [*:0]const u8,
+                        lpParameters: ?[*:0]const u8,
+                        lpDirectory: ?[*:0]const u8,
+                        nShowCmd: c_int
+                    ) callconv(.winapi) ?*anyopaque;
+                };
+                _ = shell32.ShellExecuteA(null, "open", "explorer.exe", params_z.ptr, null, 5);
+            }
+        }
+
+        broadcastDownloadsToUi(app);
+        sendJson(ctx.sock, "{\"success\":true}");
         return;
     }
 
@@ -3166,7 +3337,7 @@ const INIT_SCRIPT =
     \\      return await r.json();
     \\    } catch(e) { return { success: false, message: e.message }; }
     \\  };
-    \\  window.api.setOneviewSharedStorage = window.api.setOneviewSharedStorage || function() {};
+    \\  window.api.setOneviewSharedStorage = window.api.setOneviewSharedStorage || async function() {};
     \\  window.api.listOneviewSharedStorage = window.api.listOneviewSharedStorage || async function() { return []; };
     \\  window.api.clearOneviewSharedStorage = window.api.clearOneviewSharedStorage || async function() {};
     \\  window.api.clearOneviewEmbeddedTracking = window.api.clearOneviewEmbeddedTracking || async function() {};
@@ -3210,7 +3381,21 @@ const INIT_SCRIPT =
     \\    }, 250);
     \\    return () => clearInterval(interval);
     \\  };
-    \\  window.api.listManagedDownloads = window.api.listManagedDownloads || async function() { return []; };
+    \\  const downloadListeners = [];
+    \\  window.api.onDownloadManagerUpdated = window.api.onDownloadManagerUpdated || function(cb) {
+    \\    downloadListeners.push(cb);
+    \\  };
+    \\  window.api.triggerDownloadManagerUpdate = function(data) {
+    \\    downloadListeners.forEach(cb => {
+    \\      try { cb(data); } catch(e) {}
+    \\    });
+    \\  };
+    \\  window.api.listManagedDownloads = async function() {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/list-managed-downloads');
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false, downloads: [] }; }
+    \\  };
     \\  window.api.onBrowserExtensionCommand = window.api.onBrowserExtensionCommand || function(cb) {
     \\    document.addEventListener('zero:browser-extension-command', (e) => {
     \\      if (e.detail && e.detail.command) {
@@ -3228,7 +3413,16 @@ const INIT_SCRIPT =
     \\      if (e.detail) cb(e.detail);
     \\    });
     \\  };
-    \\  window.api.runManagedDownloadAction = window.api.runManagedDownloadAction || async function() {};
+    \\  window.api.runManagedDownloadAction = async function(payload) {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/run-managed-download-action', {
+    \\        method: 'POST',
+    \\        headers: { 'Content-Type': 'application/json' },
+    \\        body: JSON.stringify(payload)
+    \\      });
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false, message: e.message }; }
+    \\  };
     \\  window.api.verifyFileSha256 = window.api.verifyFileSha256 || async function() { return { success: false }; };
     \\  window.api.registerLocalApp = window.api.registerLocalApp || async function() { return { success: false }; };
     \\  window.api.resolveOneviewAppUrl = window.api.resolveOneviewAppUrl || async function() { return { success: false }; };
@@ -3761,10 +3955,76 @@ fn deleteCredentialHelper(allocator: std.mem.Allocator, cred_val: std.json.Value
     }
 }
 
+fn milliTimestamp() i64 {
+    const kernel32 = struct {
+        extern "kernel32" fn GetTickCount64() callconv(.winapi) u64;
+    };
+    return @as(i64, @intCast(kernel32.GetTickCount64()));
+}
+
+fn broadcastDownloadsToUi(app: *App) void {
+    // Manually stringify downloads list to JSON
+    var buf = std.ArrayList(u8).empty;
+    defer buf.deinit(app.allocator);
+
+    buf.appendSlice(app.allocator, "{\"downloads\":[") catch return;
+    for (app.managed_downloads.items, 0..) |item, idx| {
+        if (idx > 0) buf.appendSlice(app.allocator, ",") catch return;
+        // Escape savePath backslashes for JS string representation
+        var escaped_path = std.ArrayList(u8).empty;
+        defer escaped_path.deinit(app.allocator);
+        for (item.savePath) |c| {
+            if (c == '\\') {
+                escaped_path.appendSlice(app.allocator, "\\\\") catch {};
+            } else {
+                escaped_path.append(app.allocator, c) catch {};
+            }
+        }
+
+        const item_str = std.fmt.allocPrint(app.allocator,
+            "{{\"id\":\"{s}\",\"fileName\":\"{s}\",\"state\":\"{s}\",\"progress\":{d:.1},\"receivedBytes\":{d},\"totalBytes\":{d},\"bytesPerSecond\":{d},\"etaSeconds\":{d:.1},\"paused\":{},\"savePath\":\"{s}\",\"existsOnDisk\":{}}}",
+            .{ item.id, item.fileName, item.state, item.progress, item.receivedBytes, item.totalBytes, item.bytesPerSecond, item.etaSeconds, item.paused, escaped_path.items, item.existsOnDisk }
+        ) catch continue;
+        defer app.allocator.free(item_str);
+        buf.appendSlice(app.allocator, item_str) catch return;
+    }
+    buf.appendSlice(app.allocator, "]}") catch return;
+
+    // Call onDownloadManagerUpdated
+    const eval_js = std.fmt.allocPrint(app.allocator,
+        "if (window.api && typeof window.api.triggerDownloadManagerUpdate === 'function') window.api.triggerDownloadManagerUpdate({s});",
+        .{ buf.items }
+    ) catch return;
+    defer app.allocator.free(eval_js);
+    const eval_js_z = app.allocator.dupeZ(u8, eval_js) catch return;
+    defer app.allocator.free(eval_js_z);
+    
+    if (app.main_webview) |main_wv| {
+        main_wv.eval(eval_js_z) catch {};
+    }
+}
+
+fn urlEncode(allocator: std.mem.Allocator, input: []const u8) []const u8 {
+    var result = std.ArrayList(u8).empty;
+    const hex = "0123456789ABCDEF";
+    for (input) |char| {
+        if (std.ascii.isAlphanumeric(char) or char == '-' or char == '_' or char == '.' or char == '~') {
+            result.append(allocator, char) catch {};
+        } else {
+            result.append(allocator, '%') catch {};
+            result.append(allocator, hex[char >> 4]) catch {};
+            result.append(allocator, hex[char & 15]) catch {};
+        }
+    }
+    return result.toOwnedSlice(allocator) catch allocator.dupe(u8, input) catch input;
+}
+
 fn onChildWebviewMessage(key_ptr: [*:0]const u8, message_ptr: [*:0]const u8) callconv(.c) void {
     const key = std.mem.span(key_ptr);
     const message = std.mem.span(message_ptr);
     std.debug.print("DEBUG: child webview message from key {s}: {s}\n", .{ key, message });
+
+    logMsg("[Zig] onChildWebviewMessage: key={s}, message={s}", .{ key, message });
     
     const app = g_app_ptr orelse return;
     const allocator = app.allocator;
@@ -3792,6 +4052,46 @@ fn onChildWebviewMessage(key_ptr: [*:0]const u8, message_ptr: [*:0]const u8) cal
                 }
             }
             return;
+        } else if (std.mem.eql(u8, evt.string, "did-stop-loading")) {
+            const escaped_key = escapeJsString(allocator, key);
+            defer allocator.free(escaped_key);
+
+            const eval_js = std.fmt.allocPrint(allocator,
+                "if (window._wcEmit) {{ window._wcEmit('{s}', 'did-stop-loading', {{}}); window._wcEmit('{s}', 'did-finish-load', {{}}); }}",
+                .{ escaped_key, escaped_key }
+            ) catch return;
+            defer allocator.free(eval_js);
+            const eval_js_z = allocator.dupeZ(u8, eval_js) catch return;
+            defer allocator.free(eval_js_z);
+
+            logMsg("[Zig] did-stop-loading event: key={s}", .{ escaped_key });
+
+            if (app.main_webview) |main_wv| {
+                main_wv.eval(eval_js_z) catch {};
+            }
+            return;
+        } else if (std.mem.eql(u8, evt.string, "page-title-updated")) {
+            const payload = root.object.get("payload") orelse return;
+            const title = if (payload.object.get("title")) |t| t.string else "New Tab";
+            const escaped_key = escapeJsString(allocator, key);
+            defer allocator.free(escaped_key);
+            const escaped_title = escapeJsString(allocator, title);
+            defer allocator.free(escaped_title);
+
+            const eval_js = std.fmt.allocPrint(allocator,
+                "if (window._wcEmit) {{ window._wcEmit('{s}', 'page-title-updated', {{ title: '{s}' }}); }}",
+                .{ escaped_key, escaped_title }
+            ) catch return;
+            defer allocator.free(eval_js);
+            const eval_js_z = allocator.dupeZ(u8, eval_js) catch return;
+            defer allocator.free(eval_js_z);
+
+            logMsg("[Zig] page-title-updated event: key={s}, title={s}", .{ escaped_key, escaped_title });
+
+            if (app.main_webview) |main_wv| {
+                main_wv.eval(eval_js_z) catch {};
+            }
+            return;
         }
     }
 
@@ -3800,14 +4100,15 @@ fn onChildWebviewMessage(key_ptr: [*:0]const u8, message_ptr: [*:0]const u8) cal
     const payload_val = root.object.get("payload") orelse return;
     
     // Now dispatch:
-    if (std.mem.eql(u8, method, "tabs-create")) {
+    if (std.mem.eql(u8, method, "tabs-create") or std.mem.eql(u8, method, "tabs-create-standard") or std.mem.eql(u8, method, "browser-extension:compat:tabs:create")) {
         const payload = payload_val.object;
         const url = if (payload.get("url")) |u| u.string else return;
         
         const req_id_str = if (request_id) |rid| std.fmt.allocPrint(allocator, "\"{d}\"", .{rid}) catch "null" else "null";
         defer if (request_id != null) allocator.free(req_id_str);
         
-        const eval_js = std.fmt.allocPrint(allocator, "document.dispatchEvent(new CustomEvent('zero:browser-extension-command', {{ detail: {{ command: 'tabs-create', url: '{s}', active: true, requestId: {s} }} }}));", .{url, req_id_str}) catch return;
+        const cmd_name = if (std.mem.eql(u8, method, "tabs-create-standard")) "tabs-create-standard" else "tabs-create";
+        const eval_js = std.fmt.allocPrint(allocator, "document.dispatchEvent(new CustomEvent('zero:browser-extension-command', {{ detail: {{ command: '{s}', url: '{s}', active: true, requestId: {s} }} }}));", .{cmd_name, url, req_id_str}) catch return;
         defer allocator.free(eval_js);
         
         const eval_js_z = allocator.dupeZ(u8, eval_js) catch return;
@@ -4098,9 +4399,13 @@ fn onChildWebviewMessage(key_ptr: [*:0]const u8, message_ptr: [*:0]const u8) cal
                     const url = url_val.string;
                     const can_back = if (payload_val.object.get("canGoBack")) |cb| cb.bool else false;
                     const can_forward = if (payload_val.object.get("canGoForward")) |cf| cf.bool else false;
+                    const escaped_key = escapeJsString(allocator, key);
+                    defer allocator.free(escaped_key);
+                    const escaped_url = escapeJsString(allocator, url);
+                    defer allocator.free(escaped_url);
                     const eval_js = std.fmt.allocPrint(allocator,
                         "window._wcEmit && window._wcEmit('{s}', 'did-navigate', {{ url: '{s}', canGoBack: {}, canGoForward: {} }});",
-                        .{ key, url, can_back, can_forward }
+                        .{ escaped_key, escaped_url, can_back, can_forward }
                     ) catch return;
                     defer allocator.free(eval_js);
                     const eval_js_z = allocator.dupeZ(u8, eval_js) catch return;
@@ -4116,9 +4421,13 @@ fn onChildWebviewMessage(key_ptr: [*:0]const u8, message_ptr: [*:0]const u8) cal
             const url = if (payload_val.object.get("url")) |uv| uv.string else "";
             const can_back = if (payload_val.object.get("canGoBack")) |cb| cb.bool else false;
             const can_forward = if (payload_val.object.get("canGoForward")) |cf| cf.bool else false;
+            const escaped_key = escapeJsString(allocator, key);
+            defer allocator.free(escaped_key);
+            const escaped_url = escapeJsString(allocator, url);
+            defer allocator.free(escaped_url);
             const eval_js = std.fmt.allocPrint(allocator,
                 "window._wcEmit && window._wcEmit('{s}', 'history-changed', {{ url: '{s}', canGoBack: {}, canGoForward: {} }});",
-                .{ key, url, can_back, can_forward }
+                .{ escaped_key, escaped_url, can_back, can_forward }
             ) catch return;
             defer allocator.free(eval_js);
             const eval_js_z = allocator.dupeZ(u8, eval_js) catch return;
@@ -4126,6 +4435,153 @@ fn onChildWebviewMessage(key_ptr: [*:0]const u8, message_ptr: [*:0]const u8) cal
             if (app.main_webview) |main_wv| {
                 main_wv.eval(eval_js_z) catch {};
             }
+        }
+    } else if (std.mem.eql(u8, method, "download-started")) {
+        if (payload_val == .object) {
+            const p = payload_val.object;
+            const id = if (p.get("id")) |i| i.string else "";
+            const fileName = if (p.get("fileName")) |f| f.string else "";
+            const totalBytes = if (p.get("totalBytes")) |t| t.integer else 0;
+            const savePath = if (p.get("savePath")) |s| s.string else "";
+            const state = if (p.get("state")) |s| s.string else "progressing";
+
+            const download = ManagedDownload{
+                .id = allocator.dupe(u8, id) catch "",
+                .fileName = allocator.dupe(u8, fileName) catch "",
+                .state = allocator.dupe(u8, state) catch "",
+                .progress = 0.0,
+                .receivedBytes = 0,
+                .totalBytes = totalBytes,
+                .bytesPerSecond = 0,
+                .etaSeconds = -1.0,
+                .paused = false,
+                .savePath = allocator.dupe(u8, savePath) catch "",
+                .existsOnDisk = false,
+                .last_update_time = milliTimestamp(),
+                .last_bytes = 0,
+            };
+            app.managed_downloads.append(allocator, download) catch {};
+            broadcastDownloadsToUi(app);
+        }
+    } else if (std.mem.eql(u8, method, "download-progress")) {
+        if (payload_val == .object) {
+            const p = payload_val.object;
+            const id = if (p.get("id")) |i| i.string else "";
+            const received = if (p.get("receivedBytes")) |r| r.integer else 0;
+            const total = if (p.get("totalBytes")) |t| t.integer else 0;
+
+            for (app.managed_downloads.items) |*item| {
+                if (std.mem.eql(u8, item.id, id)) {
+                    item.receivedBytes = received;
+                    item.totalBytes = total;
+                    if (total > 0) {
+                        item.progress = (@as(f64, @floatFromInt(received)) / @as(f64, @floatFromInt(total))) * 100.0;
+                    }
+                    const now = milliTimestamp();
+                    const delta_t = @as(f64, @floatFromInt(now - item.last_update_time)) / 1000.0;
+                    if (delta_t > 0.5) {
+                        const delta_bytes = received - item.last_bytes;
+                        item.bytesPerSecond = @intFromFloat(@as(f64, @floatFromInt(delta_bytes)) / delta_t);
+                        item.last_bytes = received;
+                        item.last_update_time = now;
+                    }
+                    if (item.bytesPerSecond > 0) {
+                        item.etaSeconds = @as(f64, @floatFromInt(total - received)) / @as(f64, @floatFromInt(item.bytesPerSecond));
+                    }
+                    break;
+                }
+            }
+            broadcastDownloadsToUi(app);
+        }
+    } else if (std.mem.eql(u8, method, "download-state")) {
+        if (payload_val == .object) {
+            const p = payload_val.object;
+            const id = if (p.get("id")) |i| i.string else "";
+            const state = if (p.get("state")) |s| s.string else "";
+
+            for (app.managed_downloads.items) |*item| {
+                if (std.mem.eql(u8, item.id, id)) {
+                    allocator.free(item.state);
+                    item.state = allocator.dupe(u8, state) catch "";
+                    if (std.mem.eql(u8, state, "completed")) {
+                        item.existsOnDisk = true;
+                        item.progress = 100.0;
+                        item.etaSeconds = 0.0;
+                        item.bytesPerSecond = 0;
+                    }
+                    break;
+                }
+            }
+            broadcastDownloadsToUi(app);
+        }
+    } else if (std.mem.eql(u8, method, "new-window")) {
+        if (payload_val == .object) {
+            const url = if (payload_val.object.get("url")) |uv| uv.string else "";
+            const escaped_key = escapeJsString(allocator, key);
+            defer allocator.free(escaped_key);
+            const escaped_url = escapeJsString(allocator, url);
+            defer allocator.free(escaped_url);
+            const eval_js = std.fmt.allocPrint(allocator,
+                "window._wcEmit && window._wcEmit('{s}', 'new-window', {{ url: '{s}' }});",
+                .{ escaped_key, escaped_url }
+            ) catch return;
+            defer allocator.free(eval_js);
+            const eval_js_z = allocator.dupeZ(u8, eval_js) catch return;
+            defer allocator.free(eval_js_z);
+
+            logMsg("[Zig] new-window handler triggered: key={s}, url={s}, eval_js={s}", .{ escaped_key, escaped_url, eval_js });
+
+            if (app.main_webview) |main_wv| {
+                main_wv.eval(eval_js_z) catch {};
+            }
+        }
+    } else if (std.mem.eql(u8, method, "open-detached-view-window")) {
+        if (payload_val == .object) {
+            const payload = payload_val.object;
+            const url = if (payload.get("url")) |u| u.string else return;
+            const title = if (payload.get("title")) |t| t.string else "Detached Tab";
+
+            var target_partition: []const u8 = "persist:oneview-dev-guest";
+            if (app.child_views.get(key)) |cv| {
+                if (cv.partition) |part| {
+                    target_partition = part;
+                }
+            }
+
+            const enc_url = urlEncode(allocator, url);
+            defer allocator.free(enc_url);
+            const enc_title = urlEncode(allocator, title);
+            defer allocator.free(enc_title);
+            const enc_partition = urlEncode(allocator, target_partition);
+            defer allocator.free(enc_partition);
+
+            const final_url = std.fmt.allocPrint(allocator, "http://127.0.0.1:9731/pages/detached-browser/index.html?url={s}&title={s}&partition={s}", .{ enc_url, enc_title, enc_partition }) catch return;
+            defer allocator.free(final_url);
+
+            logMsg("[Zig] onChildWebviewMessage: open-detached-view-window url={s}, final_url={s}", .{ url, final_url });
+
+            const exe_path = getOwnExePath(allocator) orelse "oneview.exe";
+            defer if (!std.mem.eql(u8, exe_path, "oneview.exe")) allocator.free(exe_path);
+            const exe_path_z = allocator.dupeZ(u8, exe_path) catch return;
+            defer allocator.free(exe_path_z);
+
+            const params = std.fmt.allocPrint(allocator, "--detached=\"{s}\" --title=\"{s}\"", .{ final_url, title }) catch return;
+            defer allocator.free(params);
+            const params_z = allocator.dupeZ(u8, params) catch return;
+            defer allocator.free(params_z);
+
+            const shell32 = struct {
+                extern "shell32" fn ShellExecuteA(
+                    hwnd: ?*anyopaque,
+                    lpOperation: ?[*:0]const u8,
+                    lpFile: [*:0]const u8,
+                    lpParameters: ?[*:0]const u8,
+                    lpDirectory: ?[*:0]const u8,
+                    nShowCmd: c_int
+                ) callconv(.winapi) ?*anyopaque;
+            };
+            const res = shell32.ShellExecuteA(null, "open", exe_path_z.ptr, params_z.ptr, null, 5); // SW_SHOW = 5
+            logMsg("[Zig] onChildWebviewMessage ShellExecuteA returned: {?p}", .{res});
         }
     }
 }
@@ -5327,4 +5783,21 @@ fn sendTelemetry(allocator: std.mem.Allocator) void {
     const resp = postJsonToBackend(allocator, "10.215.56.196", 8009, "/auth/version-report", body_str);
     if (resp) |r| allocator.free(r);
 }
+
+fn escapeJsString(allocator: std.mem.Allocator, input: []const u8) []const u8 {
+    var result = std.ArrayList(u8).empty;
+    for (input) |char| {
+        switch (char) {
+            '\\' => result.appendSlice(allocator, "\\\\") catch {},
+            '\'' => result.appendSlice(allocator, "\\'") catch {},
+            '"' => result.appendSlice(allocator, "\\\"") catch {},
+            '\n' => result.appendSlice(allocator, "\\n") catch {},
+            '\r' => result.appendSlice(allocator, "\\r") catch {},
+            '\t' => result.appendSlice(allocator, "\\t") catch {},
+            else => result.append(allocator, char) catch {},
+        }
+    }
+    return result.toOwnedSlice(allocator) catch allocator.dupe(u8, input) catch input;
+}
+
 

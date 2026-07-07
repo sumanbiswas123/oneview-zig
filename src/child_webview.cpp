@@ -358,6 +358,94 @@ public:
     }
 };
 
+static const GUID Local_IID_ICoreWebView2NavigationCompletedEventHandler = 
+    {0xd33a35bf,0x1c49,0x4f98,{0x93,0xab,0x00,0x6e,0x05,0x33,0xfe,0x1c}};
+
+class NavigationCompletedHandler : public ICoreWebView2NavigationCompletedEventHandler {
+private:
+    ULONG m_refCount = 1;
+    std::string m_key;
+public:
+    NavigationCompletedHandler(const std::string& key) : m_key(key) {}
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObject) override {
+        if (!ppvObject) return E_POINTER;
+        if (riid == IID_IUnknown || riid == Local_IID_ICoreWebView2NavigationCompletedEventHandler) {
+            *ppvObject = this;
+            AddRef();
+            return S_OK;
+        }
+        *ppvObject = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&m_refCount); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        ULONG count = InterlockedDecrement(&m_refCount);
+        if (count == 0) delete this;
+        return count;
+    }
+    HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2* sender, ICoreWebView2NavigationCompletedEventArgs* args) override {
+        std::string msg = "{\"event\":\"did-stop-loading\",\"payload\":{}}";
+        if (g_message_callback) {
+            g_message_callback(m_key.c_str(), msg.c_str());
+        }
+        return S_OK;
+    }
+};
+
+static const GUID Local_IID_ICoreWebView2DocumentTitleChangedEventHandler = 
+    {0xf5f2b923,0x953e,0x4042,{0x9f,0x95,0xf3,0xa1,0x18,0xe1,0xaf,0xd4}};
+
+class DocumentTitleChangedHandler : public ICoreWebView2DocumentTitleChangedEventHandler {
+private:
+    ULONG m_refCount = 1;
+    std::string m_key;
+public:
+    DocumentTitleChangedHandler(const std::string& key) : m_key(key) {}
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObject) override {
+        if (!ppvObject) return E_POINTER;
+        if (riid == IID_IUnknown || riid == Local_IID_ICoreWebView2DocumentTitleChangedEventHandler) {
+            *ppvObject = this;
+            AddRef();
+            return S_OK;
+        }
+        *ppvObject = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&m_refCount); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        ULONG count = InterlockedDecrement(&m_refCount);
+        if (count == 0) delete this;
+        return count;
+    }
+    HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2* sender, IUnknown* args) override {
+        LPWSTR title = nullptr;
+        if (SUCCEEDED(sender->get_DocumentTitle(&title)) && title) {
+            int len = WideCharToMultiByte(CP_UTF8, 0, title, -1, NULL, 0, NULL, NULL);
+            char* title_utf8 = new char[len];
+            WideCharToMultiByte(CP_UTF8, 0, title, -1, title_utf8, len, NULL, NULL);
+            
+            std::string title_str = title_utf8;
+            std::string escaped_title = "";
+            for (char c : title_str) {
+                if (c == '"') escaped_title += "\\\"";
+                else if (c == '\\') escaped_title += "\\\\";
+                else escaped_title += c;
+            }
+
+            std::string msg = "{\"event\":\"page-title-updated\",\"payload\":{\"title\":\"" + escaped_title + "\"}}";
+            if (g_message_callback) {
+                g_message_callback(m_key.c_str(), msg.c_str());
+            }
+
+            delete[] title_utf8;
+            CoTaskMemFree(title);
+        }
+        return S_OK;
+    }
+};
+
 static const GUID Local_IID_ICoreWebView2HistoryChangedEventHandler = 
     { 0xC79A420C, 0xEFD9, 0x4058, { 0x92, 0x95, 0x3E, 0x8B, 0x4B, 0xCA, 0xB6, 0x45 } };
 
@@ -414,6 +502,483 @@ public:
     }
 };
 
+// ─── WebView2 Download Interception and Handlers ─────────────────────────────
+#include <map>
+#include <mutex>
+
+static std::map<std::string, ICoreWebView2DownloadOperation*> g_active_downloads;
+static std::mutex g_downloads_mutex;
+
+static const GUID Local_IID_ICoreWebView2DownloadStartingEventHandler = 
+    { 0xEFEDC989, 0xC396, 0x41CA, { 0x83, 0xF7, 0x07, 0xF8, 0x45, 0xA5, 0x57, 0x24 } };
+
+static const GUID Local_IID_ICoreWebView2BytesReceivedChangedEventHandler = 
+    { 0x828E8C81, 0x34B1, 0x4168, { 0xAC, 0x3E, 0x2A, 0xEF, 0x0C, 0x22, 0xBF, 0x0A } };
+
+static const GUID Local_IID_ICoreWebView2StateChangedEventHandler = 
+    { 0x81353DA7, 0xD83C, 0x449E, { 0xB5, 0xA5, 0xA2, 0x5C, 0xFA, 0x5D, 0x1B, 0xDF } };
+
+class DownloadBytesReceivedChangedHandler : public ICoreWebView2BytesReceivedChangedEventHandler {
+private:
+    ULONG m_refCount = 1;
+    std::string m_id;
+    std::string m_key;
+public:
+    DownloadBytesReceivedChangedHandler(const std::string& id, const std::string& key) : m_id(id), m_key(key) {}
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObject) override {
+        if (!ppvObject) return E_POINTER;
+        if (riid == IID_IUnknown || riid == Local_IID_ICoreWebView2BytesReceivedChangedEventHandler) {
+            *ppvObject = this;
+            AddRef();
+            return S_OK;
+        }
+        *ppvObject = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&m_refCount); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        ULONG count = InterlockedDecrement(&m_refCount);
+        if (count == 0) delete this;
+        return count;
+    }
+    HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2DownloadOperation* sender, IUnknown* args) override {
+        INT64 received = 0;
+        INT64 total = 0;
+        sender->get_BytesReceived(&received);
+        sender->get_TotalBytesToReceive(&total);
+
+        char msg_buf[256];
+        sprintf_s(msg_buf, "{\"method\":\"download-progress\",\"payload\":{\"id\":\"%s\",\"receivedBytes\":%lld,\"totalBytes\":%lld}}", 
+                  m_id.c_str(), received, total);
+
+        if (g_message_callback) {
+            g_message_callback(m_key.c_str(), msg_buf);
+        }
+        return S_OK;
+    }
+};
+
+class DownloadStateChangedHandler : public ICoreWebView2StateChangedEventHandler {
+private:
+    ULONG m_refCount = 1;
+    std::string m_id;
+    std::string m_key;
+public:
+    DownloadStateChangedHandler(const std::string& id, const std::string& key) : m_id(id), m_key(key) {}
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObject) override {
+        if (!ppvObject) return E_POINTER;
+        if (riid == IID_IUnknown || riid == Local_IID_ICoreWebView2StateChangedEventHandler) {
+            *ppvObject = this;
+            AddRef();
+            return S_OK;
+        }
+        *ppvObject = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&m_refCount); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        ULONG count = InterlockedDecrement(&m_refCount);
+        if (count == 0) delete this;
+        return count;
+    }
+    HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2DownloadOperation* sender, IUnknown* args) override {
+        COREWEBVIEW2_DOWNLOAD_STATE state;
+        sender->get_State(&state);
+
+        std::string state_str = "progressing";
+        if (state == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED) {
+            state_str = "completed";
+            // Remove from active map and release reference
+            std::lock_guard<std::mutex> lock(g_downloads_mutex);
+            auto it = g_active_downloads.find(m_id);
+            if (it != g_active_downloads.end()) {
+                it->second->Release();
+                g_active_downloads.erase(it);
+            }
+        } else if (state == COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED) {
+            state_str = "interrupted";
+        }
+
+        INT64 received = 0;
+        INT64 total = 0;
+        sender->get_BytesReceived(&received);
+        sender->get_TotalBytesToReceive(&total);
+
+        char msg_buf[512];
+        sprintf_s(msg_buf, "{\"method\":\"download-state\",\"payload\":{\"id\":\"%s\",\"state\":\"%s\",\"receivedBytes\":%lld,\"totalBytes\":%lld}}", 
+                  m_id.c_str(), state_str.c_str(), received, total);
+
+        if (g_message_callback) {
+            g_message_callback(m_key.c_str(), msg_buf);
+        }
+        return S_OK;
+    }
+};
+
+class DownloadStartingHandler : public ICoreWebView2DownloadStartingEventHandler {
+private:
+    ULONG m_refCount = 1;
+    std::string m_key;
+public:
+    DownloadStartingHandler(const std::string& key) : m_key(key) {}
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObject) override {
+        if (!ppvObject) return E_POINTER;
+        if (riid == IID_IUnknown || riid == Local_IID_ICoreWebView2DownloadStartingEventHandler) {
+            *ppvObject = this;
+            AddRef();
+            return S_OK;
+        }
+        *ppvObject = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&m_refCount); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        ULONG count = InterlockedDecrement(&m_refCount);
+        if (count == 0) delete this;
+        return count;
+    }
+    HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2* sender, ICoreWebView2DownloadStartingEventArgs* args) override {
+        // Suppress default UI
+        args->put_Handled(TRUE);
+
+        ICoreWebView2DownloadOperation* op = nullptr;
+        args->get_DownloadOperation(&op);
+        if (op) {
+            op->AddRef();
+            
+            char id_buf[64];
+            sprintf_s(id_buf, "%p", op);
+            std::string id = id_buf;
+
+            {
+                std::lock_guard<std::mutex> lock(g_downloads_mutex);
+                g_active_downloads[id] = op;
+            }
+
+            LPWSTR resultFilePath = nullptr;
+            std::string filepath = "";
+            if (SUCCEEDED(op->get_ResultFilePath(&resultFilePath)) && resultFilePath) {
+                int len = WideCharToMultiByte(CP_UTF8, 0, resultFilePath, -1, NULL, 0, NULL, NULL);
+                char* fp_utf8 = new char[len];
+                WideCharToMultiByte(CP_UTF8, 0, resultFilePath, -1, fp_utf8, len, NULL, NULL);
+                filepath = fp_utf8;
+                delete[] fp_utf8;
+                CoTaskMemFree(resultFilePath);
+            }
+
+            // Extract file name
+            std::string filename = "";
+            size_t last_slash = filepath.find_last_of("\\/");
+            if (last_slash != std::string::npos) {
+                filename = filepath.substr(last_slash + 1);
+            } else {
+                filename = filepath;
+            }
+
+            // Escape backslashes for JSON
+            std::string filepath_escaped = "";
+            for (char c : filepath) {
+                if (c == '\\') {
+                    filepath_escaped += "\\\\";
+                } else {
+                    filepath_escaped += c;
+                }
+            }
+
+            INT64 total = 0;
+            op->get_TotalBytesToReceive(&total);
+
+            // Register handlers for progress and state changes
+            EventRegistrationToken p_token;
+            DownloadBytesReceivedChangedHandler* progressHandler = new DownloadBytesReceivedChangedHandler(id, m_key);
+            op->add_BytesReceivedChanged(progressHandler, &p_token);
+            progressHandler->Release();
+
+            EventRegistrationToken s_token;
+            DownloadStateChangedHandler* stateHandler = new DownloadStateChangedHandler(id, m_key);
+            op->add_StateChanged(stateHandler, &s_token);
+            stateHandler->Release();
+
+            char msg_buf[1024];
+            sprintf_s(msg_buf, "{\"method\":\"download-started\",\"payload\":{\"id\":\"%s\",\"fileName\":\"%s\",\"totalBytes\":%lld,\"savePath\":\"%s\",\"state\":\"progressing\"}}", 
+                      id.c_str(), filename.c_str(), total, filepath_escaped.c_str());
+
+            if (g_message_callback) {
+                g_message_callback(m_key.c_str(), msg_buf);
+            }
+        }
+        return S_OK;
+    }
+};
+
+// ─── WebView2 Context Menu Customization ──────────────────────────────────────
+static ICoreWebView2Environment* g_webViewEnvironment = nullptr; // GPU environment (default)
+static ICoreWebView2Environment* g_webViewEnvironmentCPU = nullptr; // CPU environment (for SiteSnap screenshots)
+static bool g_isInitializingEnv = false;
+static bool g_isInitializingEnvCPU = false;
+static bool g_isNativeNewWindowRequested = false;
+
+static void LogDebug(const std::string& msg) {
+    FILE* f = fopen("C:\\Users\\SumanBiswas\\oneview_debug.log", "a");
+    if (f) {
+        fprintf(f, "%s\n", msg.c_str());
+        fclose(f);
+    }
+}
+
+static const GUID Local_IID_ICoreWebView2ContextMenuRequestedEventHandler = 
+    { 0x04D3FE1D, 0xAB87, 0x42FB, { 0xA8, 0x98, 0xDA, 0x24, 0x1D, 0x35, 0xB6, 0x3C } };
+
+static const GUID Local_IID_ICoreWebView2CustomItemSelectedEventHandler = 
+    { 0x49E1D0BC, 0xFE9E, 0x4481, { 0xB7, 0xC2, 0x32, 0x32, 0x4A, 0xA2, 0x19, 0x98 } };
+
+static const GUID Local_IID_ICoreWebView2NewWindowRequestedEventHandler =
+    { 0xd4c185fe, 0xc81c, 0x4989, { 0x97, 0xaf, 0x2d, 0x3f, 0xa7, 0xab, 0x56, 0x51 } };
+
+static const GUID Local_IID_ICoreWebView2_11 = 
+    { 0x0BE78E56, 0xC193, 0x4051, { 0xB9, 0x43, 0x23, 0xB4, 0x60, 0xC0, 0x8B, 0xDB } };
+
+static const GUID Local_IID_ICoreWebView2Environment9 = 
+    { 0xF06F41BF, 0x4B5A, 0x49D8, { 0xB9, 0xF6, 0xFA, 0x16, 0xCD, 0x29, 0xF2, 0x74 } };
+
+class CustomItemSelectedHandler : public ICoreWebView2CustomItemSelectedEventHandler {
+private:
+    ULONG m_refCount = 1;
+    std::wstring m_linkUri;
+    std::string m_key;
+    ICoreWebView2* m_webview;
+    bool m_isNewWindow;
+public:
+    CustomItemSelectedHandler(const std::wstring& linkUri, const std::string& key, ICoreWebView2* webview, bool isNewWindow = false) 
+        : m_linkUri(linkUri), m_key(key), m_webview(webview), m_isNewWindow(isNewWindow) {
+        if (m_webview) m_webview->AddRef();
+    }
+    ~CustomItemSelectedHandler() {
+        if (m_webview) m_webview->Release();
+    }
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObject) override {
+        if (!ppvObject) return E_POINTER;
+        if (riid == IID_IUnknown || riid == Local_IID_ICoreWebView2CustomItemSelectedEventHandler) {
+            *ppvObject = this;
+            AddRef();
+            return S_OK;
+        }
+        *ppvObject = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&m_refCount); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        ULONG count = InterlockedDecrement(&m_refCount);
+        if (count == 0) delete this;
+        return count;
+    }
+    HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2ContextMenuItem* sender, IUnknown* args) override {
+        int len = WideCharToMultiByte(CP_UTF8, 0, m_linkUri.c_str(), -1, NULL, 0, NULL, NULL);
+        char* url_utf8 = new char[len];
+        WideCharToMultiByte(CP_UTF8, 0, m_linkUri.c_str(), -1, url_utf8, len, NULL, NULL);
+        std::string url_str = url_utf8;
+        delete[] url_utf8;
+
+        LogDebug("[C++] CustomItemSelectedHandler::Invoke: isNewWindow=" + std::to_string(m_isNewWindow) + ", key=" + m_key + ", url=" + url_str);
+
+        if (m_isNewWindow) {
+            std::string msg = "{\"method\":\"open-detached-view-window\",\"payload\":{\"url\":\"" + url_str + "\",\"title\":\"Result\"}}";
+            if (g_message_callback) {
+                g_message_callback(m_key.c_str(), msg.c_str());
+            }
+        } else {
+            std::string msg = "{\"method\":\"tabs-create-standard\",\"payload\":{\"url\":\"" + url_str + "\"}}";
+            if (g_message_callback) {
+                g_message_callback(m_key.c_str(), msg.c_str());
+            }
+        }
+        return S_OK;
+    }
+};
+
+class ContextMenuRequestedHandler : public ICoreWebView2ContextMenuRequestedEventHandler {
+private:
+    ULONG m_refCount = 1;
+    std::string m_key;
+public:
+    ContextMenuRequestedHandler(const std::string& key) : m_key(key) {}
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObject) override {
+        if (!ppvObject) return E_POINTER;
+        if (riid == IID_IUnknown || riid == Local_IID_ICoreWebView2ContextMenuRequestedEventHandler) {
+            *ppvObject = this;
+            AddRef();
+            return S_OK;
+        }
+        *ppvObject = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&m_refCount); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        ULONG count = InterlockedDecrement(&m_refCount);
+        if (count == 0) delete this;
+        return count;
+    }
+    HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2* sender, ICoreWebView2ContextMenuRequestedEventArgs* args) override {
+        ICoreWebView2ContextMenuTarget* target = nullptr;
+        args->get_ContextMenuTarget(&target);
+        if (!target) return S_OK;
+
+        BOOL hasLink = FALSE;
+        target->get_HasLinkUri(&hasLink);
+        if (hasLink) {
+            LPWSTR linkUri = nullptr;
+            target->get_LinkUri(&linkUri);
+            if (linkUri) {
+                std::wstring link_str = linkUri;
+                CoTaskMemFree(linkUri);
+
+                LogDebug("[C++] ContextMenuRequestedHandler::Invoke: HasLinkUri=" + std::string(link_str.begin(), link_str.end()));
+
+                ICoreWebView2ContextMenuItemCollection* items = nullptr;
+                args->get_MenuItems(&items);
+                if (items) {
+                    UINT32 count = 0;
+                    items->get_Count(&count);
+                    for (int i = (int)count - 1; i >= 0; i--) {
+                        ICoreWebView2ContextMenuItem* item = nullptr;
+                        items->GetValueAtIndex(i, &item);
+                        if (item) {
+                            LPWSTR label = nullptr;
+                            item->get_Label(&label);
+                            if (label) {
+                                std::wstring label_str = label;
+                                CoTaskMemFree(label);
+
+                                // Clean up & accelerator characters from label
+                                std::wstring clean_label;
+                                for (wchar_t c : label_str) {
+                                    if (c != L'&') {
+                                        clean_label += c;
+                                    }
+                                }
+
+                                LogDebug("[C++] Checking native menu item label: " + std::string(clean_label.begin(), clean_label.end()));
+
+                                // Remove native "Open link in new window" / "Open link in new tab"
+                                if (clean_label.find(L"new window") != std::wstring::npos || 
+                                    clean_label.find(L"New window") != std::wstring::npos ||
+                                    clean_label.find(L"new tab") != std::wstring::npos ||
+                                    clean_label.find(L"New tab") != std::wstring::npos) {
+                                    items->RemoveValueAtIndex(i);
+                                    LogDebug("[C++] Removed native context menu item: " + std::string(clean_label.begin(), clean_label.end()));
+                                }
+                            }
+                            item->Release();
+                        }
+                    }
+
+                    ICoreWebView2ContextMenuItem* newTabItem = nullptr;
+                    ICoreWebView2ContextMenuItem* newWindowItem = nullptr;
+                    ICoreWebView2Environment9* env9 = nullptr;
+                    if (g_webViewEnvironment && SUCCEEDED(g_webViewEnvironment->QueryInterface(Local_IID_ICoreWebView2Environment9, (void**)&env9)) && env9) {
+                        HRESULT hr1 = env9->CreateContextMenuItem(
+                            L"Open in new tab",
+                            nullptr,
+                            COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_COMMAND,
+                            &newTabItem
+                        );
+                        HRESULT hr2 = env9->CreateContextMenuItem(
+                            L"Open in new window",
+                            nullptr,
+                            COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_COMMAND,
+                            &newWindowItem
+                        );
+                        env9->Release();
+
+                        if (SUCCEEDED(hr1) && newTabItem) {
+                            CustomItemSelectedHandler* clickHandler = new CustomItemSelectedHandler(link_str, m_key, sender, false);
+                            EventRegistrationToken token;
+                            newTabItem->add_CustomItemSelected(clickHandler, &token);
+                            items->InsertValueAtIndex(0, newTabItem);
+                            newTabItem->Release();
+                            clickHandler->Release();
+                            LogDebug("[C++] Inserted custom \"Open in new tab\" menu item");
+                        }
+                        if (SUCCEEDED(hr2) && newWindowItem) {
+                            CustomItemSelectedHandler* clickHandler = new CustomItemSelectedHandler(link_str, m_key, sender, true);
+                            EventRegistrationToken token;
+                            newWindowItem->add_CustomItemSelected(clickHandler, &token);
+                            items->InsertValueAtIndex(1, newWindowItem);
+                            newWindowItem->Release();
+                            clickHandler->Release();
+                            LogDebug("[C++] Inserted custom \"Open in new window\" menu item");
+                        }
+                    }
+                    items->Release();
+                }
+            }
+        }
+        target->Release();
+        return S_OK;
+    }
+};
+
+class NewWindowRequestedHandler : public ICoreWebView2NewWindowRequestedEventHandler {
+private:
+    ULONG m_refCount = 1;
+    std::string m_key;
+public:
+    NewWindowRequestedHandler(const std::string& key) : m_key(key) {}
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObject) override {
+        if (!ppvObject) return E_POINTER;
+        if (riid == IID_IUnknown || riid == Local_IID_ICoreWebView2NewWindowRequestedEventHandler) {
+            *ppvObject = this;
+            AddRef();
+            return S_OK;
+        }
+        *ppvObject = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&m_refCount); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        ULONG count = InterlockedDecrement(&m_refCount);
+        if (count == 0) delete this;
+        return count;
+    }
+    HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2* sender, ICoreWebView2NewWindowRequestedEventArgs* args) override {
+        LPWSTR uri = nullptr;
+        args->get_Uri(&uri);
+        std::string url_str = "";
+        if (uri) {
+            int len = WideCharToMultiByte(CP_UTF8, 0, uri, -1, NULL, 0, NULL, NULL);
+            char* url_utf8 = new char[len];
+            WideCharToMultiByte(CP_UTF8, 0, uri, -1, url_utf8, len, NULL, NULL);
+            url_str = url_utf8;
+            delete[] url_utf8;
+            CoTaskMemFree(uri);
+        }
+
+        LogDebug("[C++] NewWindowRequestedHandler::Invoke: isNativeNewWindowRequested=" + std::to_string(g_isNativeNewWindowRequested) + ", url=" + url_str);
+
+        if (g_isNativeNewWindowRequested) {
+            g_isNativeNewWindowRequested = false;
+            // Let WebView2 handle it natively (opens in a new window)
+            return S_OK;
+        }
+
+        // Intercept all other requests (target="_blank", ctrl+click, middle-click) and open in a new tab!
+        args->put_Handled(TRUE);
+        if (!url_str.empty()) {
+            std::string msg = "{\"method\":\"new-window\",\"payload\":{\"url\":\"" + url_str + "\"}}";
+            if (g_message_callback) {
+                g_message_callback(m_key.c_str(), msg.c_str());
+            }
+        }
+        return S_OK;
+    }
+};
+
 class WebMessageReceivedHandler : public ICoreWebView2WebMessageReceivedEventHandler {
 private:
     ULONG m_refCount = 1;
@@ -454,11 +1019,6 @@ public:
         return S_OK;
     }
 };
-
-static ICoreWebView2Environment* g_webViewEnvironment = nullptr; // GPU environment (default)
-static ICoreWebView2Environment* g_webViewEnvironmentCPU = nullptr; // CPU environment (for SiteSnap screenshots)
-static bool g_isInitializingEnv = false;
-static bool g_isInitializingEnvCPU = false;
 
 static std::wstring GetCPU_UDFPath() {
     wchar_t appdata[MAX_PATH];
@@ -653,6 +1213,39 @@ public:
         m_parent->webview->add_HistoryChanged(histHandler, nullptr);
         histHandler->Release();
 
+        // Register NavigationCompleted handler
+        NavigationCompletedHandler* navHandler = new NavigationCompletedHandler(m_parent->key);
+        m_parent->webview->add_NavigationCompleted(navHandler, nullptr);
+        navHandler->Release();
+
+        // Register DocumentTitleChanged handler
+        DocumentTitleChangedHandler* titleHandler = new DocumentTitleChangedHandler(m_parent->key);
+        m_parent->webview->add_DocumentTitleChanged(titleHandler, nullptr);
+        titleHandler->Release();
+
+        // Register NewWindowRequested handler
+        NewWindowRequestedHandler* newWindowHandler = new NewWindowRequestedHandler(m_parent->key);
+        m_parent->webview->add_NewWindowRequested(newWindowHandler, nullptr);
+        newWindowHandler->Release();
+
+        // Register DownloadStarting handler (requires webview4)
+        ICoreWebView2_4* webview4 = nullptr;
+        if (SUCCEEDED(m_parent->webview->QueryInterface(IID_ICoreWebView2_4, (void**)&webview4)) && webview4) {
+            DownloadStartingHandler* downloadHandler = new DownloadStartingHandler(m_parent->key);
+            webview4->add_DownloadStarting(downloadHandler, nullptr);
+            downloadHandler->Release();
+            webview4->Release();
+        }
+
+        // Register ContextMenuRequested handler (requires webview11)
+        ICoreWebView2_11* webview11 = nullptr;
+        if (SUCCEEDED(m_parent->webview->QueryInterface(Local_IID_ICoreWebView2_11, (void**)&webview11)) && webview11) {
+            ContextMenuRequestedHandler* menuHandler = new ContextMenuRequestedHandler(m_parent->key);
+            webview11->add_ContextMenuRequested(menuHandler, nullptr);
+            menuHandler->Release();
+            webview11->Release();
+        }
+
         // Natively inject credential auto-capture listeners on document creation
         // This is lightweight, silent, and works on all domains (single & multi-step)
         const wchar_t* autoCaptureScript = 
@@ -660,12 +1253,14 @@ public:
             L"  const autofill = () => {"
             L"    try {"
             L"      console.log('[OneView Autofill] Requesting credentials for domain:', window.location.hostname);"
-            L"      window.chrome.webview.postMessage(JSON.stringify({"
-            L"        method: 'request-autofill',"
-            L"        payload: {"
-            L"          domain: window.location.hostname"
-            L"        }"
-            L"      }));"
+            L"      if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {"
+            L"        window.chrome.webview.postMessage(JSON.stringify({"
+            L"          method: 'request-autofill',"
+            L"          payload: {"
+            L"            domain: window.location.hostname"
+            L"          }"
+            L"        }));"
+            L"      }"
             L"    } catch(e) {"
             L"      console.log('[OneView Autofill] Error requesting credentials:', e);"
             L"    }"
@@ -764,14 +1359,16 @@ public:
             L"      const savedUser = sessionStorage.getItem('ov_last_user') || '';"
             L"      const savedPass = sessionStorage.getItem('ov_last_pass') || '';"
             L"      if (savedUser && savedPass) {"
-            L"        window.chrome.webview.postMessage(JSON.stringify({"
-            L"          method: 'save-credential',"
-            L"          payload: {"
-            L"            domain: window.location.hostname,"
-            L"            username: savedUser,"
-            L"            password: savedPass"
-            L"          }"
-            L"        }));"
+            L"        if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {"
+            L"          window.chrome.webview.postMessage(JSON.stringify({"
+            L"            method: 'save-credential',"
+            L"            payload: {"
+            L"              domain: window.location.hostname,"
+            L"              username: savedUser,"
+            L"              password: savedPass"
+            L"            }"
+            L"          }));"
+            L"        }"
             L"        sessionStorage.removeItem('ov_last_user');"
             L"        sessionStorage.removeItem('ov_last_pass');"
             L"      }"
@@ -1265,6 +1862,35 @@ extern "C" {
         ChildWebView* self = (ChildWebView*)handle;
         if (self && self->webview) {
             self->webview->Reload();
+        }
+    }
+
+    __declspec(dllexport) void child_webview_pause_download(const char* id) {
+        if (!id) return;
+        std::lock_guard<std::mutex> lock(g_downloads_mutex);
+        auto it = g_active_downloads.find(id);
+        if (it != g_active_downloads.end()) {
+            it->second->Pause();
+        }
+    }
+
+    __declspec(dllexport) void child_webview_resume_download(const char* id) {
+        if (!id) return;
+        std::lock_guard<std::mutex> lock(g_downloads_mutex);
+        auto it = g_active_downloads.find(id);
+        if (it != g_active_downloads.end()) {
+            it->second->Resume();
+        }
+    }
+
+    __declspec(dllexport) void child_webview_cancel_download(const char* id) {
+        if (!id) return;
+        std::lock_guard<std::mutex> lock(g_downloads_mutex);
+        auto it = g_active_downloads.find(id);
+        if (it != g_active_downloads.end()) {
+            it->second->Cancel();
+            it->second->Release();
+            g_active_downloads.erase(it);
         }
     }
 
