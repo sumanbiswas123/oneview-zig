@@ -409,6 +409,31 @@ export function createViewSettingsManager({
     `;
   }
 
+  async function loadCredentialsIntoCache() {
+    if (!window.api?.listProfileCredentials) return;
+    try {
+      const resp = await window.api.listProfileCredentials();
+      if (resp && Array.isArray(resp.data)) {
+        const grouped = {
+          wppproduction: [],
+          vml: [],
+          gsk: [],
+          guest: [],
+          synapse: [],
+          contentgen: [],
+        };
+        resp.data.forEach((item) => {
+          const pId = String(item.profileId || "").toLowerCase();
+          if (!grouped[pId]) grouped[pId] = [];
+          grouped[pId].push(item);
+        });
+        state.credentialCache = grouped;
+      }
+    } catch (e) {
+      console.error("loadCredentialsIntoCache error:", e);
+    }
+  }
+
   function renderNativeSettingsPage(tab) {
     const container = document.getElementById("nativeTabContent");
     if (!container || !isNativeSettingsTab(tab)) return;
@@ -466,6 +491,15 @@ export function createViewSettingsManager({
     } else if (section === "passwords") {
       sectionBody = renderNativeSettingsPasswordSection();
       sectionDescription = "Manage saved passwords securely.";
+
+      if (!state._credentialsLoaded) {
+        state._credentialsLoaded = true;
+        loadCredentialsIntoCache().then(() => {
+          renderNativeSettingsPage(tab);
+        });
+      }
+    } else {
+      state._credentialsLoaded = false;
     }
 
     container.innerHTML = `
@@ -554,6 +588,16 @@ export function createViewSettingsManager({
     const container = document.getElementById("nativeTabContent");
     if (!container || container.dataset.boundNativeSettings === "1") return;
     container.dataset.boundNativeSettings = "1";
+
+    window.addEventListener("credentials-updated", () => {
+      state._credentialsLoaded = false;
+      const activeTab = getActiveTab();
+      if (isNativeSettingsTab(activeTab) && activeTab.nativePage?.section === "passwords") {
+        loadCredentialsIntoCache().then(() => {
+          renderNativeSettingsPage(activeTab);
+        });
+      }
+    });
 
     const restoreHistorySearchFocus = (selectionStart = null, selectionEnd = null) => {
       requestAnimationFrame(() => {
@@ -764,12 +808,7 @@ export function createViewSettingsManager({
         }
 
         // Refresh credentials cache
-        if (window.api?.listProfileCredentials) {
-          const creds = await window.api.listProfileCredentials();
-          if (creds) {
-            state.credentialCache = creds;
-          }
-        }
+        await loadCredentialsIntoCache();
 
         showToast("Credential saved successfully.", "success");
         passwordForm.reset();
@@ -814,12 +853,7 @@ export function createViewSettingsManager({
           }
 
           // Refresh credentials cache
-          if (window.api?.listProfileCredentials) {
-            const creds = await window.api.listProfileCredentials();
-            if (creds) {
-              state.credentialCache = creds;
-            }
-          }
+          await loadCredentialsIntoCache();
 
           showToast("Credential deleted successfully.", "success");
           renderNativeSettingsPage(getActiveTab());

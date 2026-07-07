@@ -35,6 +35,8 @@ extern "c" fn child_webview_execute_script(
 extern "c" fn child_webview_set_message_callback(callback: *const fn(key: [*:0]const u8, message: [*:0]const u8) callconv(.c) void) void;
 extern "c" fn child_webview_detach(handle: ?*anyopaque, title_utf8: [*:0]const u8) void;
 extern "c" fn child_webview_attach(handle: ?*anyopaque) void;
+extern "c" fn child_webview_open_devtools(handle: ?*anyopaque) void;
+extern "c" fn child_webview_clear_data(handle: ?*anyopaque, origin_utf8: [*:0]const u8, types_utf8: [*:0]const u8) void;
 
 
 // ─── Native file operations (WinINet download, Shell32 unzip, SHFileOperation delete) ──
@@ -125,6 +127,7 @@ extern "c" fn fclose(stream: *anyopaque) callconv(.c) c_int;
 extern "kernel32" fn Sleep(dwMilliseconds: u32) callconv(.winapi) void;
 extern "kernel32" fn LoadLibraryA(lpLibFileName: [*:0]const u8) callconv(.winapi) ?*anyopaque;
 extern "kernel32" fn GetProcAddress(hModule: ?*anyopaque, lpProcName: [*:0]const u8) callconv(.winapi) ?*anyopaque;
+extern "kernel32" fn CreateDirectoryA(lpPathName: [*:0]const u8, lpSecurityAttributes: ?*anyopaque) callconv(.winapi) i32;
 extern "user32" fn ShowWindow(hWnd: ?*anyopaque, nCmdShow: c_int) callconv(.winapi) u32;
 extern "user32" fn GetWindowLongA(hWnd: ?*anyopaque, nIndex: c_int) callconv(.winapi) i32;
 extern "user32" fn SetWindowLongA(hWnd: ?*anyopaque, nIndex: c_int, dwNewLong: i32) callconv(.winapi) i32;
@@ -172,6 +175,7 @@ extern "user32" fn GetCursorPos(lpPoint: *POINT) callconv(.winapi) i32;
 
 const MF_STRING: u32 = 0x0000;
 const MF_SEPARATOR: u32 = 0x0800;
+const MF_GRAYED: u32 = 0x0001;
 const TPM_RIGHTBUTTON: u32 = 0x0002;
 const TPM_BOTTOMALIGN: u32 = 0x0020;
 const WM_COMMAND: u32 = 0x0111;
@@ -255,6 +259,7 @@ pub const ContentView = struct {
     last_visible: bool = false,
     pending_url: ?[:0]const u8 = null,
     loaded_url: ?[]const u8 = null,
+    partition: ?[]const u8 = null,
 };
 
 fn applyViewBounds(main_window_hwnd: ?*anyopaque, view: ContentView) void {
@@ -769,6 +774,13 @@ fn handleConnection(ctx: ConnCtx) void {
                         std.mem.eql(u8, url_path, "/api/download-progress") or
                         std.mem.eql(u8, url_path, "/api/remove-extension") or
                         std.mem.eql(u8, url_path, "/api/toggle-extension") or
+                        std.mem.eql(u8, url_path, "/api/list-credentials") or
+                        std.mem.eql(u8, url_path, "/api/save-credential") or
+                        std.mem.eql(u8, url_path, "/api/delete-credential") or
+                        std.mem.eql(u8, url_path, "/api/show-native-tab-context-menu") or
+                        std.mem.eql(u8, url_path, "/api/clear-webview-page-cache") or
+                        std.mem.eql(u8, url_path, "/api/clear-webview-user-data") or
+                        std.mem.eql(u8, url_path, "/api/toggle-webview-dev-tools") or
                         std.mem.eql(u8, url_path, "/api/install-extension");
 
     if (referer_path != null and !is_real_api) {
@@ -846,7 +858,69 @@ fn handleConnection(ctx: ConnCtx) void {
         return;
     }
 
-    // ── POST file operation routes ─────────────────────────────────────────────
+    // ── Credential management routes (read/write %APPDATA%\OneView\credentials.json) ──
+    if (std.mem.eql(u8, url_path, "/api/list-credentials")) {
+        const appdata = getEnvVar(allocator, "APPDATA");
+        defer if (appdata.len > 0) allocator.free(appdata);
+        const cred_path = std.fs.path.join(allocator, &.{ appdata, "OneView", "credentials.json" }) catch {
+            sendJson(ctx.sock, "{\"success\":true,\"data\":[]}");
+            return;
+        };
+        defer allocator.free(cred_path);
+        const cred_path_z = allocator.dupeZ(u8, cred_path) catch {
+            sendJson(ctx.sock, "{\"success\":true,\"data\":[]}");
+            return;
+        };
+        defer allocator.free(cred_path_z);
+        if (fopen(cred_path_z, "rb")) |fh| {
+            defer _ = fclose(fh);
+            _ = fseek(fh, 0, 2);
+            const file_size: usize = @intCast(ftell(fh));
+            _ = fseek(fh, 0, 0);
+            const content = allocator.alloc(u8, file_size) catch {
+                sendJson(ctx.sock, "{\"success\":true,\"data\":[]}");
+                return;
+            };
+            defer allocator.free(content);
+            _ = fread(content.ptr, 1, file_size, fh);
+            const resp = std.fmt.allocPrint(allocator, "{{\"success\":true,\"data\":{s}}}", .{content}) catch {
+                sendJson(ctx.sock, "{\"success\":true,\"data\":[]}");
+                return;
+            };
+            defer allocator.free(resp);
+            sendJson(ctx.sock, resp);
+        } else {
+            sendJson(ctx.sock, "{\"success\":true,\"data\":[]}");
+        }
+        return;
+    }
+
+    if (std.mem.eql(u8, url_path, "/api/save-credential") or std.mem.eql(u8, url_path, "/api/delete-credential")) {
+        const body_start_cred = std.mem.indexOf(u8, request, "\r\n\r\n") orelse request.len;
+        const body_cred = if (body_start_cred + 4 < request.len) request[body_start_cred + 4 ..] else "";
+
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, body_cred, .{}) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Invalid JSON\"}");
+            return;
+        };
+        defer parsed.deinit();
+
+        if (std.mem.eql(u8, url_path, "/api/delete-credential")) {
+            deleteCredentialHelper(allocator, parsed.value, "guest") catch {
+                sendJson(ctx.sock, "{\"success\":false,\"message\":\"Delete failed\"}");
+                return;
+            };
+        } else {
+            saveCredentialHelper(allocator, parsed.value, "guest") catch {
+                sendJson(ctx.sock, "{\"success\":false,\"message\":\"Save failed\"}");
+                return;
+            };
+        }
+        sendJson(ctx.sock, "{\"success\":true}");
+        return;
+    }
+
+
     // Parse JSON body from POST requests (needed for file ops)
     const body_start = std.mem.indexOf(u8, request, "\r\n\r\n") orelse request.len;
     const body = if (body_start + 4 < request.len) request[body_start + 4 ..] else "";
@@ -1467,6 +1541,563 @@ fn handleConnection(ctx: ConnCtx) void {
         return;
     }
 
+    if (std.mem.eql(u8, url_path, "/api/list-credentials")) {
+        const appdata = getEnvVar(allocator, "APPDATA");
+        defer if (appdata.len > 0) allocator.free(appdata);
+        const creds_path = std.fmt.allocPrint(allocator, "{s}\\OneView Dev\\oneview-profile-credentials.v1.json", .{appdata}) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"data\":[]}");
+            return;
+        };
+        defer allocator.free(creds_path);
+        const creds_path_z = allocator.dupeZ(u8, creds_path) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"data\":[]}");
+            return;
+        };
+        defer allocator.free(creds_path_z);
+
+        var has_creds = false;
+        var creds_raw: []u8 = &[_]u8{};
+        if (fopen(creds_path_z, "rb")) |creds_f| {
+            defer _ = fclose(creds_f);
+            _ = fseek(creds_f, 0, 2);
+            const size = ftell(creds_f);
+            if (size > 0) {
+                _ = fseek(creds_f, 0, 0);
+                creds_raw = allocator.alloc(u8, @intCast(size)) catch &[_]u8{};
+                if (creds_raw.len > 0) {
+                    _ = fread(creds_raw.ptr, 1, @intCast(size), creds_f);
+                    has_creds = true;
+                }
+            }
+        }
+        defer if (creds_raw.len > 0) allocator.free(creds_raw);
+
+        const body_res = if (has_creds)
+            std.fmt.allocPrint(allocator, "{{\"success\":true,\"data\":{s}}}", .{creds_raw}) catch "{\"success\":false,\"data\":[]}"
+        else
+            "{\"success\":true,\"data\":[]}";
+        defer if (body_res.ptr != "{\"success\":true,\"data\":[]}".ptr and body_res.ptr != "{\"success\":false,\"data\":[]}".ptr) allocator.free(body_res);
+        sendJson(ctx.sock, body_res);
+        return;
+    }
+
+    if (std.mem.eql(u8, url_path, "/api/save-credential")) {
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Invalid JSON\"}");
+            return;
+        };
+        defer parsed.deinit();
+        const profile_id = if (parsed.value.object.get("profileId")) |v| v.string else "guest";
+        const domain = if (parsed.value.object.get("domain")) |v| v.string else "";
+        const username = if (parsed.value.object.get("username")) |v| v.string else "";
+        const password = if (parsed.value.object.get("password")) |v| v.string else "";
+
+        if (domain.len == 0 or username.len == 0) {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Missing fields\"}");
+            return;
+        }
+
+        const appdata = getEnvVar(allocator, "APPDATA");
+        defer if (appdata.len > 0) allocator.free(appdata);
+        const creds_path = std.fmt.allocPrint(allocator, "{s}\\OneView Dev\\oneview-profile-credentials.v1.json", .{appdata}) catch {
+            sendJson(ctx.sock, "{\"success\":false}");
+            return;
+        };
+        defer allocator.free(creds_path);
+        const creds_path_z = allocator.dupeZ(u8, creds_path) catch {
+            sendJson(ctx.sock, "{\"success\":false}");
+            return;
+        };
+        defer allocator.free(creds_path_z);
+
+        var creds_list = std.json.Array.init(allocator);
+        defer creds_list.deinit();
+        var existing_parsed: ?std.json.Parsed(std.json.Value) = null;
+        defer if (existing_parsed) |*p| p.deinit();
+
+        if (fopen(creds_path_z, "rb")) |creds_f| {
+            defer _ = fclose(creds_f);
+            _ = fseek(creds_f, 0, 2);
+            const size = ftell(creds_f);
+            if (size > 0) {
+                _ = fseek(creds_f, 0, 0);
+                const creds_raw = allocator.alloc(u8, @intCast(size)) catch {
+                    sendJson(ctx.sock, "{\"success\":false}");
+                    return;
+                };
+                defer allocator.free(creds_raw);
+                _ = fread(creds_raw.ptr, 1, @intCast(size), creds_f);
+                if (std.json.parseFromSlice(std.json.Value, allocator, creds_raw, .{})) |parsed_val| {
+                    existing_parsed = parsed_val;
+                    if (parsed_val.value == .array) {
+                        for (parsed_val.value.array.items) |item| {
+                            creds_list.append(item) catch {};
+                        }
+                    }
+                } else |_| {}
+            }
+        }
+
+        var idx: usize = 0;
+        while (idx < creds_list.items.len) {
+            const item = creds_list.items[idx];
+            if (item == .object) {
+                const item_prof = if (item.object.get("profileId")) |v| v.string else "";
+                const item_dom = if (item.object.get("domain")) |v| v.string else "";
+                const item_user = if (item.object.get("username")) |v| v.string else "";
+                if (std.mem.eql(u8, item_prof, profile_id) and std.mem.eql(u8, item_dom, domain) and std.mem.eql(u8, item_user, username)) {
+                    _ = creds_list.orderedRemove(idx);
+                    continue;
+                }
+            }
+            idx += 1;
+        }
+
+        var new_entry = std.json.ObjectMap.empty;
+        new_entry.put(allocator, "profileId", std.json.Value{ .string = profile_id }) catch {};
+        new_entry.put(allocator, "domain", std.json.Value{ .string = domain }) catch {};
+        new_entry.put(allocator, "username", std.json.Value{ .string = username }) catch {};
+        new_entry.put(allocator, "password", std.json.Value{ .string = password }) catch {};
+        creds_list.append(std.json.Value{ .object = new_entry }) catch {};
+
+        const out_string = std.json.Stringify.valueAlloc(allocator, std.json.Value{ .array = creds_list }, .{}) catch "";
+        defer if (out_string.len > 0) allocator.free(out_string);
+        if (out_string.len > 0) {
+            if (fopen(creds_path_z, "wb")) |creds_out| {
+                defer _ = fclose(creds_out);
+                _ = fwrite(out_string.ptr, 1, out_string.len, creds_out);
+            }
+        }
+
+        sendJson(ctx.sock, "{\"success\":true}");
+        return;
+    }
+
+    if (std.mem.eql(u8, url_path, "/api/delete-credential")) {
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Invalid JSON\"}");
+            return;
+        };
+        defer parsed.deinit();
+        const profile_id = if (parsed.value.object.get("profileId")) |v| v.string else "guest";
+        const domain = if (parsed.value.object.get("domain")) |v| v.string else "";
+        const username = if (parsed.value.object.get("username")) |v| v.string else "";
+
+        if (domain.len == 0 or username.len == 0) {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Missing fields\"}");
+            return;
+        }
+
+        const appdata = getEnvVar(allocator, "APPDATA");
+        defer if (appdata.len > 0) allocator.free(appdata);
+        const creds_path = std.fmt.allocPrint(allocator, "{s}\\OneView Dev\\oneview-profile-credentials.v1.json", .{appdata}) catch {
+            sendJson(ctx.sock, "{\"success\":false}");
+            return;
+        };
+        defer allocator.free(creds_path);
+        const creds_path_z = allocator.dupeZ(u8, creds_path) catch {
+            sendJson(ctx.sock, "{\"success\":false}");
+            return;
+        };
+        defer allocator.free(creds_path_z);
+
+        var creds_list = std.json.Array.init(allocator);
+        defer creds_list.deinit();
+        var existing_parsed: ?std.json.Parsed(std.json.Value) = null;
+        defer if (existing_parsed) |*p| p.deinit();
+
+        if (fopen(creds_path_z, "rb")) |creds_f| {
+            defer _ = fclose(creds_f);
+            _ = fseek(creds_f, 0, 2);
+            const size = ftell(creds_f);
+            if (size > 0) {
+                _ = fseek(creds_f, 0, 0);
+                const creds_raw = allocator.alloc(u8, @intCast(size)) catch {
+                    sendJson(ctx.sock, "{\"success\":false}");
+                    return;
+                };
+                defer allocator.free(creds_raw);
+                _ = fread(creds_raw.ptr, 1, @intCast(size), creds_f);
+                if (std.json.parseFromSlice(std.json.Value, allocator, creds_raw, .{})) |parsed_val| {
+                    existing_parsed = parsed_val;
+                    if (parsed_val.value == .array) {
+                        for (parsed_val.value.array.items) |item| {
+                            creds_list.append(item) catch {};
+                        }
+                    }
+                } else |_| {}
+            }
+        }
+
+        var idx: usize = 0;
+        var removed = false;
+        while (idx < creds_list.items.len) {
+            const item = creds_list.items[idx];
+            if (item == .object) {
+                const item_prof = if (item.object.get("profileId")) |v| v.string else "";
+                const item_dom = if (item.object.get("domain")) |v| v.string else "";
+                const item_user = if (item.object.get("username")) |v| v.string else "";
+                if (std.mem.eql(u8, item_prof, profile_id) and std.mem.eql(u8, item_dom, domain) and std.mem.eql(u8, item_user, username)) {
+                    _ = creds_list.orderedRemove(idx);
+                    removed = true;
+                    continue;
+                }
+            }
+            idx += 1;
+        }
+
+        if (removed) {
+            const out_string = std.json.Stringify.valueAlloc(allocator, std.json.Value{ .array = creds_list }, .{}) catch "";
+            defer if (out_string.len > 0) allocator.free(out_string);
+            if (out_string.len > 0) {
+                if (fopen(creds_path_z, "wb")) |creds_out| {
+                    defer _ = fclose(creds_out);
+                    _ = fwrite(out_string.ptr, 1, out_string.len, creds_out);
+                }
+            }
+        }
+
+        sendJson(ctx.sock, "{\"success\":true}");
+        return;
+    }
+
+    if (std.mem.eql(u8, url_path, "/api/show-native-tab-context-menu")) {
+        const app = g_app_ptr orelse {
+            sendJson(ctx.sock, "{\"success\":false}");
+            return;
+        };
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
+            sendJson(ctx.sock, "{\"success\":false}");
+            return;
+        };
+        defer parsed.deinit();
+
+        const anchor_id = if (parsed.value.object.get("anchorId")) |v| v.string else "";
+        const x = if (parsed.value.object.get("x")) |v| (if (v == .integer) v.integer else 0) else 0;
+        const y = if (parsed.value.object.get("y")) |v| (if (v == .integer) v.integer else 0) else 0;
+
+        var disable_clear_left = false;
+        var disable_clear_right = false;
+        var disable_clear_cache = false;
+        var disable_clear_user_data = false;
+        var disable_inspect = false;
+
+        if (parsed.value.object.get("disabled")) |d| {
+            if (d == .object) {
+                disable_clear_left = if (d.object.get("clearLeft")) |v| v.bool else false;
+                disable_clear_right = if (d.object.get("clearRight")) |v| v.bool else false;
+                disable_clear_cache = if (d.object.get("clearCache")) |v| v.bool else false;
+                disable_clear_user_data = if (d.object.get("clearUserData")) |v| v.bool else false;
+                disable_inspect = if (d.object.get("inspectLocalFile")) |v| v.bool else false;
+            }
+        }
+
+        const ContextMenuCtx = struct {
+            app: *App,
+            anchor_id: []const u8,
+            x: i32,
+            y: i32,
+            disable_clear_left: bool,
+            disable_clear_right: bool,
+            disable_clear_cache: bool,
+            disable_clear_user_data: bool,
+            disable_inspect: bool,
+            allocator: std.mem.Allocator,
+        };
+
+        const cctx = allocator.create(ContextMenuCtx) catch {
+            sendJson(ctx.sock, "{\"success\":false}");
+            return;
+        };
+        cctx.app = app;
+        cctx.anchor_id = allocator.dupe(u8, anchor_id) catch "";
+        cctx.x = @intCast(x);
+        cctx.y = @intCast(y);
+        cctx.disable_clear_left = disable_clear_left;
+        cctx.disable_clear_right = disable_clear_right;
+        cctx.disable_clear_cache = disable_clear_cache;
+        cctx.disable_clear_user_data = disable_clear_user_data;
+        cctx.disable_inspect = disable_inspect;
+        cctx.allocator = allocator;
+
+        const S = struct {
+            fn cb(w: *Webview, arg: ?*anyopaque) void {
+                _ = w;
+                const c = @as(*ContextMenuCtx, @ptrCast(@alignCast(arg.?)));
+                defer {
+                    c.allocator.free(c.anchor_id);
+                    c.allocator.destroy(c);
+                }
+
+                const hmenu = CreatePopupMenu() orelse return;
+                defer _ = DestroyMenu(hmenu);
+
+                _ = AppendMenuA(hmenu, if (c.disable_clear_left) MF_GRAYED else MF_STRING, 1, "Clear Tabs to the Left");
+                _ = AppendMenuA(hmenu, if (c.disable_clear_right) MF_GRAYED else MF_STRING, 2, "Clear Tabs to the Right");
+                _ = AppendMenuA(hmenu, MF_SEPARATOR, 0, null);
+                _ = AppendMenuA(hmenu, if (c.disable_clear_cache) MF_GRAYED else MF_STRING, 3, "Clear Page Cache");
+                _ = AppendMenuA(hmenu, if (c.disable_clear_user_data) MF_GRAYED else MF_STRING, 4, "Clear Site Cookies & Storage");
+                _ = AppendMenuA(hmenu, MF_SEPARATOR, 0, null);
+                _ = AppendMenuA(hmenu, if (c.disable_inspect) MF_GRAYED else MF_STRING, 5, "Inspect Page (DevTools)");
+                _ = AppendMenuA(hmenu, MF_SEPARATOR, 0, null);
+                _ = AppendMenuA(hmenu, MF_STRING, 6, "Duplicate Tab");
+
+                var pt = POINT{ .x = c.x, .y = c.y };
+                _ = ClientToScreen(c.app.main_window_hwnd, &pt);
+
+                const TPM_RETURNCMD = 0x0100;
+                const TPM_NONOTIFY = 0x0080;
+                const cmd = TrackPopupMenu(hmenu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, pt.x, pt.y, 0, c.app.main_window_hwnd, null);
+
+                var action: ?[]const u8 = null;
+                if (cmd == 1) {
+                    action = "clear-left";
+                } else if (cmd == 2) {
+                    action = "clear-right";
+                } else if (cmd == 3) {
+                    action = "clear-cache";
+                } else if (cmd == 4) {
+                    action = "clear-user-data";
+                } else if (cmd == 5) {
+                    action = "inspect-local-file";
+                } else if (cmd == 6) {
+                    action = "duplicate-tab";
+                }
+
+                if (action) |act| {
+                    if (c.app.main_webview) |main_wv| {
+                        const js = std.fmt.allocPrint(c.allocator, "if (window._wcEmitTabContextAction) window._wcEmitTabContextAction('{s}', '{s}');", .{ act, c.anchor_id }) catch "";
+                        defer if (js.len > 0) c.allocator.free(js);
+                        if (js.len > 0) {
+                            if (c.allocator.dupeZ(u8, js) catch null) |js_z| {
+                                defer c.allocator.free(js_z);
+                                main_wv.eval(js_z) catch {};
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        if (app.main_webview) |main_wv| {
+            main_wv.dispatchRaw(S.cb, cctx) catch {};
+        }
+
+        sendJson(ctx.sock, "{\"success\":true}");
+        return;
+    }
+
+    if (std.mem.eql(u8, url_path, "/api/clear-webview-page-cache")) {
+        const app = g_app_ptr orelse {
+            sendJson(ctx.sock, "{\"success\":false}");
+            return;
+        };
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
+            sendJson(ctx.sock, "{\"success\":false}");
+            return;
+        };
+        defer parsed.deinit();
+
+        const url = if (parsed.value.object.get("url")) |v| v.string else "";
+        if (url.len > 0) {
+            var origin = url;
+            if (std.mem.indexOf(u8, url, "://")) |scheme_idx| {
+                const rest = url[scheme_idx + 3 ..];
+                if (std.mem.indexOfScalar(u8, rest, '/')) |slash_idx| {
+                    origin = url[0 .. scheme_idx + 3 + slash_idx];
+                }
+            }
+
+            const ClearDataCtx = struct {
+                app: *App,
+                origin: []const u8,
+                types: []const u8,
+                allocator: std.mem.Allocator,
+            };
+
+            const cctx = allocator.create(ClearDataCtx) catch {
+                sendJson(ctx.sock, "{\"success\":false}");
+                return;
+            };
+            cctx.app = app;
+            cctx.origin = allocator.dupe(u8, origin) catch "";
+            cctx.types = allocator.dupe(u8, "cache_storage,shader_cache") catch "";
+            cctx.allocator = allocator;
+
+            const S = struct {
+                fn cb(w: *Webview, arg: ?*anyopaque) void {
+                    _ = w;
+                    const c = @as(*ClearDataCtx, @ptrCast(@alignCast(arg.?)));
+                    defer {
+                        c.allocator.free(c.origin);
+                        c.allocator.free(c.types);
+                        c.allocator.destroy(c);
+                    }
+
+                    var opt_handle: ?*anyopaque = null;
+                    var it = c.app.child_views.iterator();
+                    while (it.next()) |entry| {
+                        if (entry.value_ptr.cpp_handle) |h| {
+                            opt_handle = h;
+                            break;
+                        }
+                    }
+
+                    if (opt_handle) |h| {
+                        const origin_z = c.allocator.dupeZ(u8, c.origin) catch "";
+                        defer if (origin_z.len > 0) c.allocator.free(origin_z);
+                        const types_z = c.allocator.dupeZ(u8, c.types) catch "";
+                        defer if (types_z.len > 0) c.allocator.free(types_z);
+                        if (origin_z.len > 0 and types_z.len > 0) {
+                            child_webview_clear_data(h, origin_z, types_z);
+                        }
+                    }
+                }
+            };
+
+            if (app.main_webview) |main_wv| {
+                main_wv.dispatchRaw(S.cb, cctx) catch {};
+            }
+        }
+
+        sendJson(ctx.sock, "{\"success\":true}");
+        return;
+    }
+
+    if (std.mem.eql(u8, url_path, "/api/clear-webview-user-data")) {
+        const app = g_app_ptr orelse {
+            sendJson(ctx.sock, "{\"success\":false}");
+            return;
+        };
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
+            sendJson(ctx.sock, "{\"success\":false}");
+            return;
+        };
+        defer parsed.deinit();
+
+        const url = if (parsed.value.object.get("url")) |v| v.string else "";
+        if (url.len > 0) {
+            var origin = url;
+            if (std.mem.indexOf(u8, url, "://")) |scheme_idx| {
+                const rest = url[scheme_idx + 3 ..];
+                if (std.mem.indexOfScalar(u8, rest, '/')) |slash_idx| {
+                    origin = url[0 .. scheme_idx + 3 + slash_idx];
+                }
+            }
+
+            const ClearDataCtx = struct {
+                app: *App,
+                origin: []const u8,
+                types: []const u8,
+                allocator: std.mem.Allocator,
+            };
+
+            const cctx = allocator.create(ClearDataCtx) catch {
+                sendJson(ctx.sock, "{\"success\":false}");
+                return;
+            };
+            cctx.app = app;
+            cctx.origin = allocator.dupe(u8, origin) catch "";
+            cctx.types = allocator.dupe(u8, "cookies,local_storage,indexeddb,websql,file_systems") catch "";
+            cctx.allocator = allocator;
+
+            const S = struct {
+                fn cb(w: *Webview, arg: ?*anyopaque) void {
+                    _ = w;
+                    const c = @as(*ClearDataCtx, @ptrCast(@alignCast(arg.?)));
+                    defer {
+                        c.allocator.free(c.origin);
+                        c.allocator.free(c.types);
+                        c.allocator.destroy(c);
+                    }
+
+                    var opt_handle: ?*anyopaque = null;
+                    var it = c.app.child_views.iterator();
+                    while (it.next()) |entry| {
+                        if (entry.value_ptr.cpp_handle) |h| {
+                            opt_handle = h;
+                            break;
+                        }
+                    }
+
+                    if (opt_handle) |h| {
+                        const origin_z = c.allocator.dupeZ(u8, c.origin) catch "";
+                        defer if (origin_z.len > 0) c.allocator.free(origin_z);
+                        const types_z = c.allocator.dupeZ(u8, c.types) catch "";
+                        defer if (types_z.len > 0) c.allocator.free(types_z);
+                        if (origin_z.len > 0 and types_z.len > 0) {
+                            child_webview_clear_data(h, origin_z, types_z);
+                        }
+                    }
+                }
+            };
+
+            if (app.main_webview) |main_wv| {
+                main_wv.dispatchRaw(S.cb, cctx) catch {};
+            }
+        }
+
+        sendJson(ctx.sock, "{\"success\":true}");
+        return;
+    }
+
+    if (std.mem.eql(u8, url_path, "/api/toggle-webview-dev-tools")) {
+        const app = g_app_ptr orelse {
+            sendJson(ctx.sock, "{\"success\":false}");
+            return;
+        };
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
+            sendJson(ctx.sock, "{\"success\":false}");
+            return;
+        };
+        defer parsed.deinit();
+
+        const web_contents_id = if (parsed.value.object.get("webContentsId")) |v| v.string else "";
+
+        const DevToolsCtx = struct {
+            app: *App,
+            webContentsId: []const u8,
+            allocator: std.mem.Allocator,
+        };
+
+        const dctx = allocator.create(DevToolsCtx) catch {
+            sendJson(ctx.sock, "{\"success\":false}");
+            return;
+        };
+        dctx.app = app;
+        dctx.webContentsId = allocator.dupe(u8, web_contents_id) catch "";
+        dctx.allocator = allocator;
+
+        const S = struct {
+            fn cb(w: *Webview, arg: ?*anyopaque) void {
+                _ = w;
+                const c = @as(*DevToolsCtx, @ptrCast(@alignCast(arg.?)));
+                defer {
+                    c.allocator.free(c.webContentsId);
+                    c.allocator.destroy(c);
+                }
+
+                const key_z = c.allocator.dupeZ(u8, c.webContentsId) catch "";
+                defer if (key_z.len > 0) c.allocator.free(key_z);
+
+                if (key_z.len > 0) {
+                    if (c.app.child_views.getPtr(key_z)) |view_ptr| {
+                        if (view_ptr.cpp_handle) |h| {
+                            child_webview_open_devtools(h);
+                        }
+                    }
+                }
+            }
+        };
+
+        if (app.main_webview) |main_wv| {
+            main_wv.dispatchRaw(S.cb, dctx) catch {};
+        }
+
+        sendJson(ctx.sock, "{\"success\":true}");
+        return;
+    }
+
     // Route: /frameproxy?url=...
     if (std.mem.startsWith(u8, url_path, "/frameproxy")) {
         const query_start = std.mem.indexOfScalar(u8, url_path_raw, '?') orelse return;
@@ -1802,6 +2433,9 @@ fn nativeWebcontentCall(req: EasyApp.Request) anyerror!void {
             if (payload.get("url")) |u_val| {
                 view.pending_url = try app.allocator.dupeZ(u8, u_val.string);
             }
+            if (payload.get("partition")) |p_val| {
+                view.partition = try app.allocator.dupe(u8, p_val.string);
+            }
             try app.child_views.put(key_copy, view);
         } else {
             if (payload.get("url")) |u_val| {
@@ -1810,6 +2444,14 @@ fn nativeWebcontentCall(req: EasyApp.Request) anyerror!void {
                         app.allocator.free(old_url);
                     }
                     view_ptr.pending_url = try app.allocator.dupeZ(u8, u_val.string);
+                }
+            }
+            if (payload.get("partition")) |p_val| {
+                if (app.child_views.getPtr(key)) |view_ptr| {
+                    if (view_ptr.partition) |old_part| {
+                        app.allocator.free(old_part);
+                    }
+                    view_ptr.partition = try app.allocator.dupe(u8, p_val.string);
                 }
             }
         }
@@ -1860,6 +2502,30 @@ fn nativeWebcontentCall(req: EasyApp.Request) anyerror!void {
 
                 const child_win = child_webview_get_hwnd(handle);
                 child_webview_add_init_script(handle, INIT_SCRIPT);
+
+                // Dynamically read and inject webview-preload.js
+                const preload_file_path = std.fs.path.join(c.app.allocator, &.{ UI_ROOT, "lib", "webview-preload.js" }) catch null;
+                defer if (preload_file_path) |p| c.app.allocator.free(p);
+                if (preload_file_path) |p| {
+                    if (c.app.allocator.dupeZ(u8, p) catch null) |p_z| {
+                        defer c.app.allocator.free(p_z);
+                        if (fopen(p_z, "rb")) |fh| {
+                            defer _ = fclose(fh);
+                            _ = fseek(fh, 0, 2);
+                            const size = ftell(fh);
+                            if (size > 0) {
+                                const size_usize: usize = @intCast(size);
+                                _ = fseek(fh, 0, 0);
+                                if (c.app.allocator.alloc(u8, size_usize + 1) catch null) |buf| {
+                                    defer c.app.allocator.free(buf);
+                                    _ = fread(buf.ptr, 1, size_usize, fh);
+                                    buf[size_usize] = 0; // null-terminated
+                                    child_webview_add_init_script(handle, buf[0..size_usize:0].ptr);
+                                }
+                            }
+                        }
+                    }
+                }
 
                 // Associate the webview and handle with our placeholder
                 if (c.app.child_views.getPtr(c.key_z)) |view_ptr| {
@@ -2167,6 +2833,9 @@ fn nativeWebcontentCall(req: EasyApp.Request) anyerror!void {
             if (entry.value_ptr.*.loaded_url) |l_url| {
                 app.allocator.free(l_url);
             }
+            if (entry.value_ptr.*.partition) |part| {
+                app.allocator.free(part);
+            }
             const old_key = entry.key_ptr.*;
             _ = app.child_views.remove(key);
             app.allocator.free(old_key);
@@ -2318,6 +2987,7 @@ fn nativeWebcontentCall(req: EasyApp.Request) anyerror!void {
 // ─── Init script: rewrite backend URLs and wire window.api IPC to native ─────
 const INIT_SCRIPT =
     \\(function() {
+    \\  window.process = window.process || { argv: [], env: { ONEVIEW_APP_ENV: 'dev' } };
     \\  const B1 = 'http://10.215.56.196:8009';
     \\  const B2 = 'http://10.215.56.196:5000';
     \\  const P1 = 'http://127.0.0.1:9731/proxy';
@@ -2402,6 +3072,33 @@ const INIT_SCRIPT =
     \\  };
     \\  window.api.clearPersistedCredentials = window.api.clearPersistedCredentials || async function() {
     \\    try { localStorage.removeItem('oneview_persisted_creds'); return { success: true }; } catch(e) { return { success: false }; }
+    \\  };
+    \\  // ── Profile credential store (password manager via HTTP server) ───────────
+    \\  window.api.listProfileCredentials = window.api.listProfileCredentials || async function() {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/list-credentials');
+    \\      return await r.json();
+    \\    } catch(e) { return { success: true, data: [] }; }
+    \\  };
+    \\  window.api.saveProfileCredential = window.api.saveProfileCredential || async function(cred) {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/save-credential', {
+    \\        method: 'POST',
+    \\        headers: { 'Content-Type': 'application/json' },
+    \\        body: JSON.stringify(cred)
+    \\      });
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false, message: e.message }; }
+    \\  };
+    \\  window.api.deleteProfileCredential = window.api.deleteProfileCredential || async function(cred) {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/delete-credential', {
+    \\        method: 'POST',
+    \\        headers: { 'Content-Type': 'application/json' },
+    \\        body: JSON.stringify(cred)
+    \\      });
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false, message: e.message }; }
     \\  };
     \\  window.api.setOneviewSharedStorage = window.api.setOneviewSharedStorage || function() {};
     \\  window.api.listOneviewSharedStorage = window.api.listOneviewSharedStorage || async function() { return []; };
@@ -2686,6 +3383,81 @@ const INIT_SCRIPT =
     \\    } catch(e) { return { success: false, message: e.message }; }
     \\  };
     \\  window.api.reloadBrowserExtension = window.api.reloadBrowserExtension || async function() { return { success: true }; };
+    \\  window.api.listProfileCredentials = window.api.listProfileCredentials || async function() {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/list-credentials');
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false, data: [] }; }
+    \\  };
+    \\  window.api.saveProfileCredential = window.api.saveProfileCredential || async function(opts) {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/save-credential', {
+    \\        method: 'POST',
+    \\        headers: { 'Content-Type': 'application/json' },
+    \\        body: JSON.stringify(opts)
+    \\      });
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false, message: e.message }; }
+    \\  };
+    \\  window.api.deleteProfileCredential = window.api.deleteProfileCredential || async function(opts) {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/delete-credential', {
+    \\        method: 'POST',
+    \\        headers: { 'Content-Type': 'application/json' },
+    \\        body: JSON.stringify(opts)
+    \\      });
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false, message: e.message }; }
+    \\  };
+    \\  window.api.showNativeTabContextMenu = window.api.showNativeTabContextMenu || async function(opts) {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/show-native-tab-context-menu', {
+    \\        method: 'POST',
+    \\        headers: { 'Content-Type': 'application/json' },
+    \\        body: JSON.stringify(opts)
+    \\      });
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false }; }
+    \\  };
+    \\  let _tabContextListener = null;
+    \\  window.api.onNativeTabContextAction = window.api.onNativeTabContextAction || function(cb) {
+    \\    _tabContextListener = cb;
+    \\  };
+    \\  window._wcEmitTabContextAction = function(action, anchorId) {
+    \\    if (_tabContextListener) {
+    \\      try { _tabContextListener({ action, anchorId }); } catch(e) {}
+    \\    }
+    \\  };
+    \\  window.api.clearWebviewPageCache = window.api.clearWebviewPageCache || async function(partition, url) {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/clear-webview-page-cache', {
+    \\        method: 'POST',
+    \\        headers: { 'Content-Type': 'application/json' },
+    \\        body: JSON.stringify({ partition, url })
+    \\      });
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false, message: e.message }; }
+    \\  };
+    \\  window.api.clearWebviewUserData = window.api.clearWebviewUserData || async function(partition, url) {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/clear-webview-user-data', {
+    \\        method: 'POST',
+    \\        headers: { 'Content-Type': 'application/json' },
+    \\        body: JSON.stringify({ partition, url })
+    \\      });
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false, message: e.message }; }
+    \\  };
+    \\  window.api.toggleWebviewDevTools = window.api.toggleWebviewDevTools || async function(webContentsId) {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/toggle-webview-dev-tools', {
+    \\        method: 'POST',
+    \\        headers: { 'Content-Type': 'application/json' },
+    \\        body: JSON.stringify({ webContentsId })
+    \\      });
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false, message: e.message }; }
+    \\  };
 
     \\
     \\  // ── window.oneviewExtension and window.oneview bridge ────────────────────────
@@ -2742,6 +3514,186 @@ const INIT_SCRIPT =
 
 var g_app_ptr: ?*App = null;
 var g_is_detached: bool = false;
+
+fn saveCredentialHelper(allocator: std.mem.Allocator, cred_val: std.json.Value, profileId: []const u8) !void {
+    const appdata = getEnvVar(allocator, "APPDATA");
+    defer if (appdata.len > 0) allocator.free(appdata);
+    const dir_path = try std.fs.path.join(allocator, &.{ appdata, "OneView" });
+    defer allocator.free(dir_path);
+
+    const dir_path_z = try allocator.dupeZ(u8, dir_path);
+    defer allocator.free(dir_path_z);
+    _ = CreateDirectoryA(dir_path_z, null);
+
+    const cred_path = try std.fs.path.join(allocator, &.{ dir_path, "credentials.json" });
+    defer allocator.free(cred_path);
+    const cred_path_z2 = try allocator.dupeZ(u8, cred_path);
+    defer allocator.free(cred_path_z2);
+
+    // Read existing list
+    var existing_parsed: ?std.json.Parsed(std.json.Value) = null;
+    defer if (existing_parsed) |*ep| ep.deinit();
+    if (fopen(cred_path_z2, "rb")) |fh| {
+        defer _ = fclose(fh);
+        _ = fseek(fh, 0, 2);
+        const file_size: usize = @intCast(ftell(fh));
+        _ = fseek(fh, 0, 0);
+        if (file_size > 0) {
+            const raw = try allocator.alloc(u8, file_size);
+            defer allocator.free(raw);
+            _ = fread(raw.ptr, 1, file_size, fh);
+            if (std.json.parseFromSlice(std.json.Value, allocator, raw, .{})) |pv| {
+                existing_parsed = pv;
+            } else |_| {}
+        }
+    }
+
+    var creds_list = std.ArrayList(std.json.Value).empty;
+    defer creds_list.deinit(allocator);
+    if (existing_parsed) |ep| {
+        if (ep.value == .array) {
+            for (ep.value.array.items) |item| {
+                try creds_list.append(allocator, item);
+            }
+        }
+    }
+
+    const inc = cred_val.object;
+    const inc_domain = if (inc.get("domain")) |d| d.string else "";
+    const inc_username = if (inc.get("username")) |u| u.string else "";
+    const inc_profileId = if (inc.get("profileId")) |p| p.string else profileId;
+    const inc_password = if (inc.get("password")) |pw| pw.string else "";
+
+    var found = false;
+    for (creds_list.items) |*item| {
+        if (item.* == .object) {
+            const d = if (item.object.get("domain")) |dv| dv.string else "";
+            const u = if (item.object.get("username")) |uv| uv.string else "";
+            const p = if (item.object.get("profileId")) |pv| pv.string else "";
+            if (std.mem.eql(u8, d, inc_domain) and std.mem.eql(u8, u, inc_username) and std.mem.eql(u8, p, inc_profileId)) {
+                try item.object.put(allocator, "password", std.json.Value{ .string = inc_password });
+                found = true;
+                break;
+            }
+        }
+    }
+    if (!found) {
+        var new_entry = std.json.ObjectMap.empty;
+        try new_entry.put(allocator, "profileId", std.json.Value{ .string = inc_profileId });
+        try new_entry.put(allocator, "domain", std.json.Value{ .string = inc_domain });
+        try new_entry.put(allocator, "username", std.json.Value{ .string = inc_username });
+        try new_entry.put(allocator, "password", std.json.Value{ .string = inc_password });
+        try creds_list.append(allocator, std.json.Value{ .object = new_entry });
+    }
+
+    // Manually stringify JSON list to avoid Zig std.json differences
+    var out_buf = std.ArrayList(u8).empty;
+    defer out_buf.deinit(allocator);
+    try out_buf.appendSlice(allocator, "[\n");
+    var added: usize = 0;
+    for (creds_list.items) |item| {
+        if (item == .object) {
+            const p = if (item.object.get("profileId")) |v| v.string else "guest";
+            const d = if (item.object.get("domain")) |v| v.string else "";
+            const u = if (item.object.get("username")) |v| v.string else "";
+            const pw = if (item.object.get("password")) |v| v.string else "";
+            const comma = if (added > 0) "," else "";
+            const entry_str = try std.fmt.allocPrint(allocator, "{s}{{\"profileId\":\"{s}\",\"domain\":\"{s}\",\"username\":\"{s}\",\"password\":\"{s}\"}}", .{comma, p, d, u, pw});
+            defer allocator.free(entry_str);
+            try out_buf.appendSlice(allocator, entry_str);
+            added += 1;
+        }
+    }
+    try out_buf.appendSlice(allocator, "\n]");
+
+    if (fopen(cred_path_z2, "wb")) |fh2| {
+        defer _ = fclose(fh2);
+        _ = fwrite(out_buf.items.ptr, 1, out_buf.items.len, fh2);
+    }
+}
+
+fn deleteCredentialHelper(allocator: std.mem.Allocator, cred_val: std.json.Value, profileId: []const u8) !void {
+    const appdata = getEnvVar(allocator, "APPDATA");
+    defer if (appdata.len > 0) allocator.free(appdata);
+    const dir_path = try std.fs.path.join(allocator, &.{ appdata, "OneView" });
+    defer allocator.free(dir_path);
+
+    const cred_path = try std.fs.path.join(allocator, &.{ dir_path, "credentials.json" });
+    defer allocator.free(cred_path);
+    const cred_path_z2 = try allocator.dupeZ(u8, cred_path);
+    defer allocator.free(cred_path_z2);
+
+    // Read existing list
+    var existing_parsed: ?std.json.Parsed(std.json.Value) = null;
+    defer if (existing_parsed) |*ep| ep.deinit();
+    if (fopen(cred_path_z2, "rb")) |fh| {
+        defer _ = fclose(fh);
+        _ = fseek(fh, 0, 2);
+        const file_size: usize = @intCast(ftell(fh));
+        _ = fseek(fh, 0, 0);
+        if (file_size > 0) {
+            const raw = try allocator.alloc(u8, file_size);
+            defer allocator.free(raw);
+            _ = fread(raw.ptr, 1, file_size, fh);
+            if (std.json.parseFromSlice(std.json.Value, allocator, raw, .{})) |pv| {
+                existing_parsed = pv;
+            } else |_| {}
+        }
+    }
+
+    var creds_list = std.ArrayList(std.json.Value).empty;
+    defer creds_list.deinit(allocator);
+    if (existing_parsed) |ep| {
+        if (ep.value == .array) {
+            for (ep.value.array.items) |item| {
+                try creds_list.append(allocator, item);
+            }
+        }
+    }
+
+    const inc = cred_val.object;
+    const inc_domain = if (inc.get("domain")) |d| d.string else "";
+    const inc_username = if (inc.get("username")) |u| u.string else "";
+    const inc_profileId = if (inc.get("profileId")) |p| p.string else profileId;
+
+    var new_list = std.ArrayList(std.json.Value).empty;
+    defer new_list.deinit(allocator);
+    for (creds_list.items) |item| {
+        if (item == .object) {
+            const d = if (item.object.get("domain")) |dv| dv.string else "";
+            const u = if (item.object.get("username")) |uv| uv.string else "";
+            const p = if (item.object.get("profileId")) |pv| pv.string else "";
+            if (std.mem.eql(u8, d, inc_domain) and std.mem.eql(u8, u, inc_username) and std.mem.eql(u8, p, inc_profileId)) continue;
+        }
+        try new_list.append(allocator, item);
+    }
+
+    // Manually stringify JSON list to avoid Zig std.json differences
+    var out_buf = std.ArrayList(u8).empty;
+    defer out_buf.deinit(allocator);
+    try out_buf.appendSlice(allocator, "[\n");
+    var added: usize = 0;
+    for (new_list.items) |item| {
+        if (item == .object) {
+            const p = if (item.object.get("profileId")) |v| v.string else "guest";
+            const d = if (item.object.get("domain")) |v| v.string else "";
+            const u = if (item.object.get("username")) |v| v.string else "";
+            const pw = if (item.object.get("password")) |v| v.string else "";
+            const comma = if (added > 0) "," else "";
+            const entry_str = try std.fmt.allocPrint(allocator, "{s}{{\"profileId\":\"{s}\",\"domain\":\"{s}\",\"username\":\"{s}\",\"password\":\"{s}\"}}", .{comma, p, d, u, pw});
+            defer allocator.free(entry_str);
+            try out_buf.appendSlice(allocator, entry_str);
+            added += 1;
+        }
+    }
+
+    try out_buf.appendSlice(allocator, "\n]");
+
+    if (fopen(cred_path_z2, "wb")) |fh2| {
+        defer _ = fclose(fh2);
+        _ = fwrite(out_buf.items.ptr, 1, out_buf.items.len, fh2);
+    }
+}
 
 fn onChildWebviewMessage(key_ptr: [*:0]const u8, message_ptr: [*:0]const u8) callconv(.c) void {
     const key = std.mem.span(key_ptr);
@@ -2904,6 +3856,193 @@ fn onChildWebviewMessage(key_ptr: [*:0]const u8, message_ptr: [*:0]const u8) cal
         };
         
         child_webview_execute_script(active_h, script_z, S.scriptCallback, sctx);
+    } else if (std.mem.eql(u8, method, "ipc:send-to-host")) {
+        const payload = payload_val.object;
+        const channel = if (payload.get("channel")) |c| c.string else return;
+        const args = if (payload.get("args")) |a| a else return;
+
+        const args_json = std.json.Stringify.valueAlloc(allocator, args, .{}) catch return;
+        defer allocator.free(args_json);
+
+        const eval_js = std.fmt.allocPrint(allocator,
+            "window._wcEmit('{s}', 'ipc-message', {{ channel: '{s}', args: {s} }});",
+            .{ key, channel, args_json }
+        ) catch return;
+        defer allocator.free(eval_js);
+
+        const eval_js_z = allocator.dupeZ(u8, eval_js) catch return;
+        defer allocator.free(eval_js_z);
+
+    } else if (std.mem.eql(u8, method, "request-autofill")) {
+        if (payload_val == .object) {
+            if (payload_val.object.get("domain")) |domain_val| {
+                if (domain_val == .string) {
+                    const req_domain = domain_val.string;
+                    var profileId: []const u8 = "guest";
+                    var cpp_h: ?*anyopaque = null;
+                    if (app.child_views.get(key)) |view| {
+                        cpp_h = view.cpp_handle;
+                        if (view.partition) |part| {
+                            if (std.mem.indexOf(u8, part, "gsk") != null) {
+                                profileId = "gsk";
+                            } else if (std.mem.indexOf(u8, part, "wpp") != null) {
+                                profileId = "wppproduction";
+                            } else if (std.mem.indexOf(u8, part, "vml") != null) {
+                                profileId = "vml";
+                            } else if (std.mem.indexOf(u8, part, "guest") != null) {
+                                profileId = "guest";
+                            }
+                        }
+                    }
+
+                    if (cpp_h) |active_h| {
+                        const appdata = getEnvVar(allocator, "APPDATA");
+                        defer if (appdata.len > 0) allocator.free(appdata);
+                        const cred_path = std.fs.path.join(allocator, &.{ appdata, "OneView", "credentials.json" }) catch return;
+                        defer allocator.free(cred_path);
+                        const cred_path_z = allocator.dupeZ(u8, cred_path) catch return;
+                        defer allocator.free(cred_path_z);
+
+                        var match_user: ?[]const u8 = null;
+                        var match_pass: ?[]const u8 = null;
+                        var raw_content: ?[]u8 = null;
+                        defer if (raw_content) |rc| allocator.free(rc);
+
+                        if (fopen(cred_path_z, "rb")) |fh| {
+                            defer _ = fclose(fh);
+                            _ = fseek(fh, 0, 2);
+                            const file_size: usize = @intCast(ftell(fh));
+                            _ = fseek(fh, 0, 0);
+                            if (file_size > 0) {
+                                raw_content = allocator.alloc(u8, file_size) catch null;
+                                if (raw_content) |rc| {
+                                    _ = fread(rc.ptr, 1, file_size, fh);
+                                    var cred_parsed = std.json.parseFromSlice(std.json.Value, allocator, rc, .{}) catch null;
+                                    defer if (cred_parsed) |*p| p.deinit();
+
+                                    if (cred_parsed) |p| {
+                                        if (p.value == .array) {
+                                            for (p.value.array.items) |item| {
+                                                if (item == .object) {
+                                                    const item_profile = if (item.object.get("profileId")) |prof| prof.string else "guest";
+                                                    if (std.mem.eql(u8, item_profile, profileId)) {
+                                                        const item_domain = if (item.object.get("domain")) |d| d.string else "";
+                                                        
+                                                        var is_match = false;
+                                                        if (std.mem.eql(u8, req_domain, item_domain) or
+                                                            std.mem.indexOf(u8, req_domain, item_domain) != null or
+                                                            std.mem.indexOf(u8, item_domain, req_domain) != null) {
+                                                            is_match = true;
+                                                        } else if (std.mem.indexOf(u8, req_domain, "wpp") != null or std.mem.indexOf(u8, req_domain, "microsoftonline") != null) {
+                                                            if (std.mem.indexOf(u8, item_domain, "wpp") != null or std.mem.indexOf(u8, item_domain, "microsoftonline") != null) {
+                                                                is_match = true;
+                                                            }
+                                                        } else if (std.mem.indexOf(u8, req_domain, "veevavault.com") != null or std.mem.indexOf(u8, req_domain, "federation.gsk.com") != null) {
+                                                            if (std.mem.indexOf(u8, item_domain, "veevavault.com") != null or std.mem.indexOf(u8, item_domain, "federation.gsk.com") != null) {
+                                                                is_match = true;
+                                                            }
+                                                        }
+
+                                                        if (is_match) {
+                                                            match_user = if (item.object.get("username")) |u| u.string else "";
+                                                            match_pass = if (item.object.get("password")) |pw| pw.string else "";
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (match_user != null and match_pass != null) {
+                            const res_js = std.fmt.allocPrint(allocator,
+                                "if (window.onAutofillReceived) window.onAutofillReceived('{s}', '{s}');",
+                                .{ match_user.?, match_pass.? }
+                            ) catch return;
+                            defer allocator.free(res_js);
+                            const res_js_z = allocator.dupeZ(u8, res_js) catch return;
+                            defer allocator.free(res_js_z);
+                            
+                            const S = struct {
+                                fn cb(ctx: ?*anyopaque, success: bool, json_str: [*:0]const u8) callconv(.c) void {
+                                    _ = ctx; _ = success; _ = json_str;
+                                }
+                            };
+                            child_webview_execute_script(active_h, res_js_z, S.cb, null);
+                        }
+                    }
+                }
+            }
+        }
+    } else if (std.mem.eql(u8, method, "save-credential")) {
+        std.debug.print("DEBUG: [Zig] onChildWebviewMessage got save-credential method!\n", .{});
+        if (payload_val == .object) {
+            var profileId: []const u8 = "guest";
+            if (app.child_views.get(key)) |view| {
+                if (view.partition) |part| {
+                    if (std.mem.indexOf(u8, part, "gsk") != null) {
+                        profileId = "gsk";
+                    } else if (std.mem.indexOf(u8, part, "wpp") != null) {
+                        profileId = "wppproduction";
+                    } else if (std.mem.indexOf(u8, part, "vml") != null) {
+                        profileId = "vml";
+                    } else if (std.mem.indexOf(u8, part, "guest") != null) {
+                        profileId = "guest";
+                    }
+                }
+            }
+            saveCredentialHelper(allocator, payload_val, profileId) catch |err| {
+                std.debug.print("DEBUG: [Zig] saveCredentialHelper failed: {}\n", .{err});
+            };
+            if (app.main_webview) |main_wv| {
+                main_wv.eval("window.dispatchEvent(new CustomEvent('credentials-updated'));") catch {};
+            }
+        }
+    } else if (std.mem.eql(u8, method, "delete-credential")) {
+        std.debug.print("DEBUG: [Zig] onChildWebviewMessage got delete-credential method!\n", .{});
+        if (payload_val == .object) {
+            var profileId: []const u8 = "guest";
+            if (app.child_views.get(key)) |view| {
+                if (view.partition) |part| {
+                    if (std.mem.indexOf(u8, part, "gsk") != null) {
+                        profileId = "gsk";
+                    } else if (std.mem.indexOf(u8, part, "wpp") != null) {
+                        profileId = "wppproduction";
+                    } else if (std.mem.indexOf(u8, part, "vml") != null) {
+                        profileId = "vml";
+                    } else if (std.mem.indexOf(u8, part, "guest") != null) {
+                        profileId = "guest";
+                    }
+                }
+            }
+            deleteCredentialHelper(allocator, payload_val, profileId) catch |err| {
+                std.debug.print("DEBUG: [Zig] deleteCredentialHelper failed: {}\n", .{err});
+            };
+            if (app.main_webview) |main_wv| {
+                main_wv.eval("window.dispatchEvent(new CustomEvent('credentials-updated'));") catch {};
+            }
+        }
+    } else if (std.mem.eql(u8, method, "source-changed")) {
+        if (payload_val == .object) {
+            if (payload_val.object.get("url")) |url_val| {
+                if (url_val == .string) {
+                    const url = url_val.string;
+                    const eval_js = std.fmt.allocPrint(allocator,
+                        "window._wcEmit && window._wcEmit('{s}', 'did-navigate', {{ url: '{s}' }});",
+                        .{ key, url }
+                    ) catch return;
+                    defer allocator.free(eval_js);
+                    const eval_js_z = allocator.dupeZ(u8, eval_js) catch return;
+                    defer allocator.free(eval_js_z);
+                    if (app.main_webview) |main_wv| {
+                        main_wv.eval(eval_js_z) catch {};
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -3047,6 +4186,9 @@ pub fn main(init: std.process.Init) !void {
             }
             if (entry.value_ptr.*.loaded_url) |l_url| {
                 app.allocator.free(l_url);
+            }
+            if (entry.value_ptr.*.partition) |part| {
+                app.allocator.free(part);
             }
             app.allocator.free(entry.key_ptr.*);
         }

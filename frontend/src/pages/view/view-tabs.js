@@ -946,12 +946,28 @@ export function createViewTabsManager({
       }
     });
 
-    wv.addEventListener("did-navigate-in-page", async () => {
+    wv.addEventListener("did-navigate", (event) => {
+      const currentTabId = wv.id.replace("webview-", "");
+      const boundTab = getTabs().find((tab) => tab.id === currentTabId);
+      if (!boundTab) return;
+      const currentUrl = event.url || wv.getURL() || "";
+      boundTab.url = currentUrl;
+      if (boundTab.id === getActiveTabId()) {
+        updateUrlDisplay(currentUrl);
+      }
+    });
+
+    wv.addEventListener("did-navigate-in-page", async (event) => {
       const currentTabId = wv.id.replace("webview-", "");
       const boundTab = getTabs().find((tab) => tab.id === currentTabId);
       if (!boundTab) return;
 
-      const currentUrl = wv.getURL();
+      const currentUrl = event.url || wv.getURL() || "";
+      boundTab.url = currentUrl;
+      if (boundTab.id === getActiveTabId()) {
+        updateUrlDisplay(currentUrl);
+      }
+
       boundTab.credentialAutomationEnabled = shouldEnableCredentialAutomation(
         currentUrl,
         wv.getTitle() || boundTab.title || "",
@@ -1210,12 +1226,7 @@ export function createViewTabsManager({
 
   function isInspectableLocalFileTab(tab, webview = null) {
     if (!tab || tab.isHome) return false;
-    const currentUrl =
-      (webview && typeof webview.getURL === "function" && webview.getURL()) ||
-      tab.url ||
-      "";
-    if (IS_DEV_APP_BUILD) return true;
-    return /^file:\/\//i.test(String(currentUrl || "").trim());
+    return true;
   }
 
   function applyWebsiteScrollbarTheme(webview, tab) {

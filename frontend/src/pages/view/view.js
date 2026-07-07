@@ -3075,6 +3075,20 @@ function refreshTabScrollControls() {
   rightBtn.classList.toggle("hidden", atEnd);
 }
 
+function getWebviewId(wv) {
+  if (!wv) return null;
+  if (typeof wv.getWebContentsId === "function") {
+    try {
+      const id = wv.getWebContentsId();
+      if (id) return id;
+    } catch(e) {}
+  }
+  if (wv._webContent) {
+    return wv._webContent.key || wv._webContent.id || null;
+  }
+  return wv.key || wv.id || wv.getAttribute("key") || wv.getAttribute("id") || null;
+}
+
 async function runTabContextAction(action, anchorId) {
   const anchorIndex = tabs.findIndex((t) => t.id === anchorId);
   const anchorTab = tabs[anchorIndex];
@@ -3086,10 +3100,7 @@ async function runTabContextAction(action, anchorId) {
 
   if (action === "inspect-local-file" && anchorTab) {
     const wv = document.getElementById(`webview-${anchorTab.id}`);
-    const webContentsId =
-      wv && typeof wv.getWebContentsId === "function"
-        ? wv.getWebContentsId()
-        : 0;
+    const webContentsId = getWebviewId(wv);
     if (!webContentsId || !window.api?.toggleWebviewDevTools) {
       showToast(
         IS_DEV_APP_BUILD
@@ -3465,8 +3476,7 @@ async function setMobileViewport(activeWebview, viewportType = "mobile") {
 
   // Physically resize the native webview surface
   if (window.api?.setWebviewBounds) {
-    const webcontentsId =
-      activeWebview.getWebContentsId?.() || activeWebview._webContent?.id;
+    const webcontentsId = getWebviewId(activeWebview);
     if (webcontentsId) {
       console.log(
         `[Viewport] Triggering native resize to ${preset.width}x${preset.height} for id: ${webcontentsId}`,
@@ -3556,8 +3566,7 @@ async function restoreNativeViewport(activeWebview) {
   // but for immediate restoration before next sync, we can force it.
   if (window.api?.setWebviewBounds) {
     const container = document.getElementById("webviews-container");
-    const webcontentsId =
-      activeWebview.getWebContentsId?.() || activeWebview._webContent?.id;
+    const webcontentsId = getWebviewId(activeWebview);
     if (container && webcontentsId) {
       const rect = container.getBoundingClientRect();
       await window.api.setWebviewBounds(webcontentsId, {

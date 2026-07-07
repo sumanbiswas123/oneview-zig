@@ -309,6 +309,13 @@ function attachControllerMethods(el, ctrl) {
   ctrl.on("did-finish-load", () => installModifiedClickBridge(el));
   ctrl.on("did-navigate-in-page", () => installModifiedClickBridge(el));
 
+  ctrl.on("ipc-message", (payload) => {
+    const ev = new Event("ipc-message");
+    ev.channel = payload.channel;
+    ev.args = payload.args || [];
+    el.dispatchEvent(ev);
+  });
+
   el._webContent = ctrl;
   el.getURL = () => String(ctrl.state.url || "");
   el.getTitle = () => String(ctrl.state.title || "");

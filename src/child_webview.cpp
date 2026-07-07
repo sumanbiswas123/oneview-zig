@@ -304,6 +304,52 @@ public:
     }
 };
 
+static const GUID Local_IID_ICoreWebView2SourceChangedEventHandler = 
+    { 0x3C067F9F, 0x5388, 0x4772, { 0x8B, 0x48, 0x79, 0xF7, 0xEF, 0x1A, 0xB3, 0x7C } };
+
+class SourceChangedHandler : public ICoreWebView2SourceChangedEventHandler {
+private:
+    ULONG m_refCount = 1;
+    std::string m_key;
+public:
+    SourceChangedHandler(const std::string& key) : m_key(key) {}
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObject) override {
+        if (!ppvObject) return E_POINTER;
+        if (riid == IID_IUnknown || riid == Local_IID_ICoreWebView2SourceChangedEventHandler) {
+            *ppvObject = this;
+            AddRef();
+            return S_OK;
+        }
+        *ppvObject = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&m_refCount); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        ULONG count = InterlockedDecrement(&m_refCount);
+        if (count == 0) delete this;
+        return count;
+    }
+    HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2* sender, ICoreWebView2SourceChangedEventArgs* args) override {
+        LPWSTR url = nullptr;
+        if (SUCCEEDED(sender->get_Source(&url)) && url) {
+            int len = WideCharToMultiByte(CP_UTF8, 0, url, -1, NULL, 0, NULL, NULL);
+            char* url_utf8 = new char[len];
+            WideCharToMultiByte(CP_UTF8, 0, url, -1, url_utf8, len, NULL, NULL);
+
+            std::string msg = "{\"method\":\"source-changed\",\"payload\":{\"url\":\"" + std::string(url_utf8) + "\"}}";
+
+            if (g_message_callback) {
+                g_message_callback(m_key.c_str(), msg.c_str());
+            }
+
+            delete[] url_utf8;
+            CoTaskMemFree(url);
+        }
+        return S_OK;
+    }
+};
+
 class WebMessageReceivedHandler : public ICoreWebView2WebMessageReceivedEventHandler {
 private:
     ULONG m_refCount = 1;
@@ -518,6 +564,13 @@ public:
         if (SUCCEEDED(m_parent->webview->get_Settings(&settings)) && settings) {
             settings->put_AreDefaultContextMenusEnabled(TRUE);
             settings->put_AreDevToolsEnabled(TRUE);
+            // Enable native password autosave and autofill (works like Edge/Chrome)
+            ICoreWebView2Settings4* settings4 = nullptr;
+            if (SUCCEEDED(settings->QueryInterface(IID_ICoreWebView2Settings4, (void**)&settings4)) && settings4) {
+                settings4->put_IsPasswordAutosaveEnabled(TRUE);
+                settings4->put_IsGeneralAutofillEnabled(TRUE);
+                settings4->Release();
+            }
             settings->Release();
         }
 
@@ -525,6 +578,152 @@ public:
         WebMessageReceivedHandler* msgHandler = new WebMessageReceivedHandler(m_parent->key);
         m_parent->webview->add_WebMessageReceived(msgHandler, nullptr);
         msgHandler->Release();
+
+        // Register SourceChanged handler
+        SourceChangedHandler* srcHandler = new SourceChangedHandler(m_parent->key);
+        m_parent->webview->add_SourceChanged(srcHandler, nullptr);
+        srcHandler->Release();
+
+        // Natively inject credential auto-capture listeners on document creation
+        // This is lightweight, silent, and works on all domains (single & multi-step)
+        const wchar_t* autoCaptureScript = 
+            L"(function() {"
+            L"  const autofill = () => {"
+            L"    try {"
+            L"      console.log('[OneView Autofill] Requesting credentials for domain:', window.location.hostname);"
+            L"      window.chrome.webview.postMessage(JSON.stringify({"
+            L"        method: 'request-autofill',"
+            L"        payload: {"
+            L"          domain: window.location.hostname"
+            L"        }"
+            L"      }));"
+            L"    } catch(e) {"
+            L"      console.log('[OneView Autofill] Error requesting credentials:', e);"
+            L"    }"
+            L"  };"
+            L"  const fillInputs = (username, password) => {"
+            L"    try {"
+            L"      const inputs = Array.from(document.querySelectorAll('input'));"
+            L"      console.log('[OneView Autofill] Found input elements count:', inputs.length);"
+            L"      inputs.forEach((el, idx) => {"
+            L"        console.log('[OneView Autofill] Input #' + idx + ' details: type=' + el.type + ' name=' + el.name + ' id=' + el.id + ' placeholder=' + el.placeholder + ' visible=' + (el.offsetWidth > 0));"
+            L"      });"
+            L"      const passInput = inputs.find(el => el.type === 'password');"
+            L"      const userInput = inputs.find(el => el.type === 'email' || el.type === 'text' || el.type === 'tel');"
+            L"      console.log('[OneView Autofill] userInput found:', !!userInput, 'passInput found:', !!passInput);"
+            L"      if (userInput && !userInput._userTyped) {"
+            L"        if (!userInput.value || userInput.value !== username) {"
+            L"          console.log('[OneView Autofill] Setting username field');"
+            L"          userInput.value = username || '';"
+            L"          userInput.dispatchEvent(new Event('input', { bubbles: true }));"
+            L"          userInput.dispatchEvent(new Event('change', { bubbles: true }));"
+            L"        }"
+            L"      }"
+            L"      if (passInput && !passInput._userTyped) {"
+            L"        if (passInput.value !== password) {"
+            L"          console.log('[OneView Autofill] Setting password field');"
+            L"          passInput.value = password || '';"
+            L"          passInput.dispatchEvent(new Event('input', { bubbles: true }));"
+            L"          passInput.dispatchEvent(new Event('change', { bubbles: true }));"
+            L"        }"
+            L"      }"
+            L"    } catch(e) {"
+            L"      console.log('[OneView Autofill] Error filling inputs:', e);"
+            L"    }"
+            L"  };"
+            L"  window.onAutofillReceived = (username, password) => {"
+            L"    console.log('[OneView Autofill] Received credentials callback');"
+            L"    fillInputs(username, password);"
+            L"    try {"
+            L"      Array.from(document.querySelectorAll('iframe')).forEach(iframe => {"
+            L"        try {"
+            L"          iframe.contentWindow.postMessage({"
+            L"            type: 'ov-autofill',"
+            L"            username: username,"
+            L"            password: password"
+            L"          }, '*');"
+            L"        } catch(err) {}"
+            L"      });"
+            L"    } catch(err) {}"
+            L"  };"
+            L"  window.addEventListener('message', (e) => {"
+            L"    if (e.data && e.data.type === 'ov-autofill') {"
+            L"      console.log('[OneView Autofill] Received cross-frame message event');"
+            L"      fillInputs(e.data.username, e.data.password);"
+            L"    }"
+            L"  });"
+            L"  if (document.readyState === 'loading') {"
+            L"    document.addEventListener('DOMContentLoaded', autofill);"
+            L"  } else {"
+            L"    autofill();"
+            L"  }"
+            L"  setTimeout(autofill, 500);"
+            L"  setTimeout(autofill, 1500);"
+            L"  setTimeout(autofill, 3000);"
+            L"  setTimeout(autofill, 5000);"
+            L"  try {"
+            L"    const observer = new MutationObserver(autofill);"
+            L"    observer.observe(document.body || document.documentElement, {"
+            L"      childList: true,"
+            L"      subtree: true"
+            L"    });"
+            L"  } catch(e) {}"
+            L"  const captureField = (e) => {"
+            L"    const el = e.target;"
+            L"    if (!el || el.tagName !== 'INPUT') return;"
+            L"    el._userTyped = true;"
+            L"    try {"
+            L"      if (el.type === 'password') {"
+            L"        sessionStorage.setItem('ov_last_pass', el.value);"
+            L"      } else if (el.type === 'email' || el.type === 'text' || el.type === 'tel') {"
+            L"        sessionStorage.setItem('ov_last_user', el.value);"
+            L"      }"
+            L"    } catch(err) {}"
+            L"  };"
+            L"  document.addEventListener('input', captureField, true);"
+            L"  document.addEventListener('change', captureField, true);"
+            L"  document.addEventListener('blur', captureField, true);"
+            L"  const notifySave = () => {"
+            L"    try {"
+            L"      const inputs = Array.from(document.querySelectorAll('input'));"
+            L"      const passInput = inputs.find(el => el.type === 'password');"
+            L"      const userInput = inputs.find(el => el.type === 'email' || el.type === 'text' || el.type === 'tel');"
+            L"      let u = userInput ? userInput.value : '';"
+            L"      let p = passInput ? passInput.value : '';"
+            L"      if (u) sessionStorage.setItem('ov_last_user', u);"
+            L"      if (p) sessionStorage.setItem('ov_last_pass', p);"
+            L"      const savedUser = sessionStorage.getItem('ov_last_user') || '';"
+            L"      const savedPass = sessionStorage.getItem('ov_last_pass') || '';"
+            L"      if (savedUser && savedPass) {"
+            L"        window.chrome.webview.postMessage(JSON.stringify({"
+            L"          method: 'save-credential',"
+            L"          payload: {"
+            L"            domain: window.location.hostname,"
+            L"            username: savedUser,"
+            L"            password: savedPass"
+            L"          }"
+            L"        }));"
+            L"        sessionStorage.removeItem('ov_last_user');"
+            L"        sessionStorage.removeItem('ov_last_pass');"
+            L"      }"
+            L"    } catch(e) {}"
+            L"  };"
+            L"  document.addEventListener('input', (e) => {"
+            L"    const el = e.target;"
+            L"    if (!el || el.tagName !== 'INPUT') return;"
+            L"    try {"
+            L"      if (el.type === 'password') {"
+            L"        sessionStorage.setItem('ov_last_pass', el.value);"
+            L"      } else if (el.type === 'email' || el.type === 'text' || el.type === 'tel') {"
+            L"        sessionStorage.setItem('ov_last_user', el.value);"
+            L"      }"
+            L"    } catch(e) {}"
+            L"  }, true);"
+            L"  document.addEventListener('submit', notifySave, true);"
+            L"  document.addEventListener('keydown', (e) => { if (e.key === 'Enter') notifySave(); }, true);"
+            L"  document.addEventListener('click', notifySave, true);"
+            L"})();";
+        m_parent->webview->AddScriptToExecuteOnDocumentCreated(autoCaptureScript, nullptr);
 
         m_parent->is_initialized = true;
 
@@ -555,8 +754,16 @@ extern "C" {
         printf("[C++ DEBUG] Pre-initializing global GPU WebView2 environment...\n");
         fflush(stdout);
         g_isInitializingEnv = true;
+
+        // Use a persistent user data folder so native password manager saves across sessions
+        wchar_t appdata[MAX_PATH] = {};
+        std::wstring udf;
+        if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, appdata))) {
+            udf = std::wstring(appdata) + L"\\OneView\\WebViewData";
+        }
+
         GlobalEnvironmentCompletedHandler* handler = new GlobalEnvironmentCompletedHandler(false);
-        HRESULT hr = g_CreateCoreWebView2EnvironmentWithOptions(nullptr, nullptr, nullptr, handler);
+        HRESULT hr = g_CreateCoreWebView2EnvironmentWithOptions(nullptr, udf.empty() ? nullptr : udf.c_str(), nullptr, handler);
         handler->Release();
         if (FAILED(hr)) {
             g_isInitializingEnv = false;
@@ -816,7 +1023,10 @@ extern "C" {
         wchar_t* wscript = new wchar_t[len];
         MultiByteToWideChar(CP_UTF8, 0, script_utf8, -1, wscript, len);
         
-        self->pending_init_script = wscript;
+        if (!self->pending_init_script.empty()) {
+            self->pending_init_script += L"\n;\n";
+        }
+        self->pending_init_script += wscript;
         
         if (self->webview) {
             self->webview->AddScriptToExecuteOnDocumentCreated(wscript, nullptr);
@@ -848,6 +1058,33 @@ extern "C" {
             callback(ctx, false, "{}");
             handler->Release();
         }
+    }
+
+    __declspec(dllexport) void child_webview_open_devtools(void* handle) {
+        if (!handle) return;
+        ChildWebView* self = (ChildWebView*)handle;
+        if (self->webview) {
+            self->webview->OpenDevToolsWindow();
+        }
+    }
+
+    __declspec(dllexport) void child_webview_clear_data(void* handle, const char* origin_utf8, const char* types_utf8) {
+        if (!handle || !origin_utf8 || !types_utf8) return;
+        ChildWebView* self = (ChildWebView*)handle;
+        if (!self->webview) return;
+
+        std::string params = "{\"origin\":\"";
+        params += origin_utf8;
+        params += "\",\"storageTypes\":\"";
+        params += types_utf8;
+        params += "\"}";
+
+        int len = MultiByteToWideChar(CP_UTF8, 0, params.c_str(), -1, NULL, 0);
+        wchar_t* wparams = new wchar_t[len];
+        MultiByteToWideChar(CP_UTF8, 0, params.c_str(), -1, wparams, len);
+
+        self->webview->CallDevToolsProtocolMethod(L"Storage.clearDataForOrigin", wparams, nullptr);
+        delete[] wparams;
     }
 
     __declspec(dllexport) void child_webview_set_message_callback(ChildWebviewMessageCallback cb) {
