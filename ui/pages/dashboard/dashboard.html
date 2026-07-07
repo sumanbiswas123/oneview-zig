@@ -1,0 +1,1226 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OneView</title>
+    <script type="module" crossorigin src="../../assets/dashboard-BF3eXYQR.js"></script>
+    <link rel="modulepreload" crossorigin href="../../assets/modulepreload-polyfill-B5Qt9EMX.js">
+    <link rel="modulepreload" crossorigin href="../../assets/titlebar-Dccu27MD.js">
+    <link rel="modulepreload" crossorigin href="../../assets/notifications-CBkElf_0.js">
+    <link rel="modulepreload" crossorigin href="../../assets/app-env-Dw5Rxq_p.js">
+    <link rel="modulepreload" crossorigin href="../../assets/app-runtime-CuOCpSBc.js">
+    <link rel="modulepreload" crossorigin href="../../assets/webcontent-client-DJU5VCvB.js">
+    <link rel="modulepreload" crossorigin href="../../assets/utils-D9W4LkxG.js">
+    <link rel="modulepreload" crossorigin href="../../assets/app-update-notifications-DQcYLNxX.js">
+    <link rel="modulepreload" crossorigin href="../../assets/external-exe-DRsy67iY.js">
+    <link rel="stylesheet" crossorigin href="../../assets/dashboard-CAWEbWPo.css">
+    <link rel="stylesheet" crossorigin href="../../assets/titlebar-DDvDEpZH.css">
+  </head>
+  <!-- Module scripts -->
+  <body>
+    <!-- Background Effects -->
+    <div class="ambient-light"></div>
+    <div class="aurora-overlay"></div>
+    <div class="noise-overlay"></div>
+
+    <div id="app-root">
+      <div class="drag-box"></div>
+      <div class="titlebar" role="toolbar" aria-hidden="false">
+        <button
+          id="min-btn"
+          class="no-drag action-btn minimize"
+          aria-label="Minimize"
+          title="Minimize"
+        >
+          <svg viewBox="0 0 24 24" width="12" height="12">
+            <line
+              x1="5"
+              y1="12"
+              x2="19"
+              y2="12"
+              stroke="currentColor"
+              stroke-width="4"
+              stroke-linecap="round"
+            />
+          </svg>
+        </button>
+        <button
+          id="max-btn"
+          class="no-drag action-btn maximize"
+          aria-label="Maximize"
+          title="Maximize"
+        >
+          <svg viewBox="0 0 24 24" width="12" height="12">
+            <rect
+              x="6"
+              y="6"
+              width="12"
+              height="12"
+              stroke="currentColor"
+              stroke-width="4"
+              fill="none"
+            />
+          </svg>
+        </button>
+        <button
+          id="close-btn"
+          class="no-drag action-btn close"
+          aria-label="Close"
+          title="Close"
+        >
+          <svg viewBox="0 0 24 24" width="12" height="12">
+            <line
+              x1="18"
+              y1="6"
+              x2="6"
+              y2="18"
+              stroke="currentColor"
+              stroke-width="4"
+              stroke-linecap="round"
+            />
+            <line
+              x1="6"
+              y1="6"
+              x2="18"
+              y2="18"
+              stroke="currentColor"
+              stroke-width="4"
+              stroke-linecap="round"
+            />
+          </svg>
+        </button>
+      </div>
+      <header>
+        <div class="top-bar">
+          <img class="logo" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMDAgMTAwIj4KPCEtLSBJY29uIEdyb3VwIC0tPgo8IS0tIDxnIGZpbGw9IiMzNDk4REIiPiAtLT4KICA8IS0tICdPJyAoQnVsYiBHbGFzcykgLSBDaXJjbGUgLS0+CiAgPGNpcmNsZSB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIGN4PSIzNSIgY3k9IjUwIiByPSIzMCIgZmlsbD0idHJhbnNwYXJlbnQiIHN0cm9rZT0iIzMzMzMzMyAgICAgIiBzdHlsZT0iICAgICBmaWxsOiBub25lOyAgICAgc3Ryb2tlOiAjMDAwMDAwOyAgICAgc3Ryb2tlLXdpZHRoOiA1cHg7ICAgICAvKiBzdHJva2UtZGFzaGFycmF5OiAyLDI7ICovICAgICBzdHJva2UtbGluZWpvaW46IHJvdW5kOyAiLz4KICA8IS0tICdWJyAoQnVsYiBCYXNlKSAtIEludmVydGVkIFRyYXBlem9pZCAtLT4KICA8cG9seWdvbiBwb2ludHM9IjE4LDI1IDM1LDY1IDUyLDI1IDM1LDc1IiBzdHlsZT0iZmlsbDogIzAwMDtzdHJva2U6ICMwMDAwMDA7c3Ryb2tlLXdpZHRoOiA1cHg7Ii8+CjwhLS0gPC9nPiAtLT4KCjwhLS0gPHBvbHlnb24gcG9pbnRzPSIwLDUwIDUwLDUwIDEwMCw1MCAyMDAsNTAiIHN0eWxlPSJmaWxsOiAjMDAwO3N0cm9rZTogIzAwMDAwMDtzdHJva2Utd2lkdGg6IDFweDsiLz4gLS0+Cgo8IS0tIFRleHQgIk9uZVZpZXciIC0tPgo8dGV4dCB4PSI3MCIgeT0iNjAiIGZvbnQtZmFtaWx5PSJBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSIzMCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IiMwMDAwMDAiPk9uZVZpZXc8L3RleHQ+Cjwvc3ZnPg==" alt="OneView Logo" />
+          <!-- <input class="search-input hidden" type="search" placeholder="Search..." aria-label="Search"> -->
+          <button class="nav-btn" id="home-btn" aria-label="Home" title="Home">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="22"
+              height="22"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="feather feather-home"
+            >
+              <path
+                d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"
+                class="home-roof"
+              ></path>
+              <polyline points="9 22 9 12 15 12 15 22"></polyline>
+            </svg>
+          </button>
+
+          <button
+            class="nav-btn"
+            id="webview-btn"
+            aria-label="Webview"
+            title="Webview"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="22"
+              height="22"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="feather feather-globe"
+            >
+              <circle cx="12" cy="12" r="10" class="globe-circle"></circle>
+              <line x1="2" y1="12" x2="22" y2="12"></line>
+              <path
+                d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"
+              ></path>
+            </svg>
+          </button>
+          <button
+            class="nav-btn"
+            id="tools-btn"
+            aria-label="App Store"
+            title="App Store"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="22"
+              height="22"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="feather feather-shopping-bag"
+            >
+              <path
+                d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"
+              ></path>
+              <path d="M3 6h18"></path>
+              <path d="M16 10a4 4 0 0 1-8 0"></path>
+            </svg>
+          </button>
+          <div class="flex-spacer"></div>
+          <div
+            class="theme-toggle-wrapper"
+            style="margin-right: 12px; display: flex; align-items: center"
+          >
+            <button
+              id="theme-toggle"
+              class="nav-btn"
+              aria-label="Toggle Theme"
+              title="Switch Theme"
+            >
+              <!-- Sun Icon (for Dark Mode) -->
+              <!-- Sun (Light Mode) -->
+              <svg
+                id="sun-icon"
+                xmlns="http://www.w3.org/2000/svg"
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="feather feather-sun theme-icon"
+              >
+                <circle cx="12" cy="12" r="5"></circle>
+                <line x1="12" y1="1" x2="12" y2="3"></line>
+                <line x1="12" y1="21" x2="12" y2="23"></line>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                <line x1="1" y1="12" x2="3" y2="12"></line>
+                <line x1="21" y1="12" x2="23" y2="12"></line>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+              </svg>
+              <!-- Moon (Dark Mode) -->
+              <svg
+                id="moon-icon"
+                xmlns="http://www.w3.org/2000/svg"
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="feather feather-moon theme-icon"
+                style="display: none"
+              >
+                <path
+                  d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"
+                ></path>
+              </svg>
+            </button>
+          </div>
+
+          <!-- Update Button (Hidden by default) -->
+          <button
+            id="update-btn"
+            class="nav-btn"
+            aria-label="Update Available"
+            title="Update Available - Click to Restart"
+            style="margin-right: 12px; color: var(--accent-success); display: none"
+          >
+            <span class="update-icon-shell" aria-hidden="true">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="feather feather-download-cloud"
+              >
+                <polyline points="8 17 12 21 16 17"></polyline>
+                <line x1="12" y1="12" x2="12" y2="21"></line>
+                <path
+                  d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"
+                ></path>
+              </svg>
+            </span>
+            <span id="update-btn-label" class="update-btn-label hidden"></span>
+            <span class="update-badge">!</span>
+          </button>
+
+          <!-- Notification Bell -->
+          <button
+            id="notification-btn"
+            class="nav-btn"
+            aria-label="Notifications"
+            title="Notifications"
+            style="margin-right: 12px"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="22"
+              height="22"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+            </svg>
+            <span
+              id="notification-badge"
+              class="notification-badge"
+              style="display: none"
+            ></span>
+          </button>
+
+          <!-- User feedback button-->
+          <button
+            id="feedback-btn"
+            class="nav-btn"
+            aria-label="Send Feedback"
+            title="Send Feedback"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="22"
+              height="22"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+          </button>
+
+
+          <p id="user-greeting">Hi, User!</p>
+          <button
+            class="profile-btn"
+            aria-label="Open profile"
+            title="Profile"
+            aria-haspopup="true"
+            aria-expanded="false"
+          >
+            <img
+              class="profile-pic"
+              src="../../assets/user-icon-3i-nMUyk.png"
+              alt="Profile"
+            />
+          </button>
+
+          <!-- Notification Panel -->
+          <div id="notification-panel" class="notification-panel hidden">
+            <div class="notification-panel-header">
+              <h3>Notifications</h3>
+              <button class="clear-all-btn" id="clear-notifications-btn">
+                Clear All
+              </button>
+            </div>
+            <div class="notification-panel-content" id="notification-list">
+              <div class="empty-notifications">No notifications</div>
+            </div>
+          </div>
+
+          <!-- Feedback Modal -->
+          <div id="feedback-modal" class="feedback-modal hidden">
+            <div class="feedback-modal-header">
+              <h3>Send Feedback</h3>
+              <button class="feedback-close-btn" id="feedback-close-btn" aria-label="Close">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+            <div class="feedback-modal-content">
+              <form id="feedback-form">
+                <div class="form-group">
+                  <label for="feedback-app-select">App or Feature</label>
+                  <select id="feedback-app-select" required>
+                    <option value="">Select an app...</option>
+                    <option value="oneview">OneView</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label for="feedback-category-select"><br>Feedback Area</label>
+                  <select id="feedback-category-select" required>
+                    <option value="">Select an area...</option>
+                    <option value="UI/UX">UI/UX</option>
+                    <option value="Performance">Performance</option>
+                    <option value="Bug">Bug</option>
+                    <option value="Feature">Feature Request</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label for="feedback-message"><br>Your Feedback</label>
+                  <textarea 
+                    id="feedback-message" 
+                    placeholder="Please share your feedback..." 
+                    rows="5"
+                    required
+                  ></textarea>
+                </div>
+
+                <!-- <div class="form-group">
+                  <label for="feedback-image"><br>Attach Image (Optional)</label>
+                  <div class="image-upload-wrapper">
+                    <input 
+                      type="file" 
+                      id="feedback-image" 
+                      accept="image/*"
+                      style="display: none"
+                    />
+                    <button 
+                      type="button" 
+                      class="image-upload-btn"
+                      id="feedback-image-btn"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+                        <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                        <path d="M21 15l-5-5L5 21"></path>
+                      </svg>
+                      Choose Image
+                    </button>
+                    <span id="feedback-image-name" class="image-name"></span>
+                  </div>
+                  <div id="feedback-image-preview-container" class="image-preview-container hidden">
+                    <img id="feedback-image-preview" class="image-preview" alt="Preview" />
+                    <button type="button" class="image-remove-btn" id="feedback-image-remove-btn" aria-label="Remove image">✕</button>
+                  </div>
+                </div> -->
+
+                <div class="feedback-modal-actions">
+                  <button type="button" class="btn-secondary" id="feedback-cancel-btn">Cancel</button>
+                  <button type="submit" class="btn-primary" id="feedback-submit-btn">Send Feedback</button>
+                </div>
+              </form>
+            </div>
+          </div>
+
+          <!-- Profile dropdown -->
+          <div
+            id="profile-menu"
+            class="profile-menu hidden"
+            role="menu"
+            aria-hidden="true"
+          >
+            <button class="profile-menu-item" id="change-icon" role="menuitem">
+              <!-- camera icon -->
+              <svg
+                class="menu-icon"
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path
+                  fill="currentColor"
+                  d="M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm8-3h-2.5l-1-1h-9l-1 1H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2zM12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"
+                />
+              </svg>
+              <span>Change user icon</span>
+            </button>
+            <button
+              class="profile-menu-item"
+              id="change-password"
+              role="menuitem"
+            >
+              <!-- lock icon -->
+              <svg
+                class="menu-icon"
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path
+                  fill="currentColor"
+                  d="M12 17a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm6-6h-1V9a5 5 0 0 0-10 0v2H6a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7a1 1 0 0 0-1-1zM9 9a3 3 0 0 1 6 0v2H9V9z"
+                />
+              </svg>
+              <span>Change password</span>
+            </button>
+            <button
+              class="profile-menu-item hidden"
+              id="startup-diagnostics"
+              role="menuitem"
+            >
+              <svg
+                class="menu-icon"
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path
+                  fill="currentColor"
+                  d="M3 3h18v2H3V3zm2 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2zm2 3v2h2v-2H7zm0 4v2h8v-2H7zm4-4v2h4v-2h-4z"
+                />
+              </svg>
+              <span>Startup diagnostics</span>
+            </button>
+            <button
+              class="profile-menu-item"
+              id="check-app-updates"
+              role="menuitem"
+            >
+              <svg
+                class="menu-icon"
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path
+                  fill="currentColor"
+                  d="M12 3a9 9 0 0 1 8.18 5.25 1 1 0 1 1-1.82.84A7 7 0 1 0 19 12h-2.5a1 1 0 0 1 0-2H21a1 1 0 0 1 1 1v4.5a1 1 0 0 1-2 0v-1.27A9 9 0 1 1 12 3Z"
+                />
+              </svg>
+              <span>Check for updates</span>
+            </button>
+            <button
+              class="profile-menu-item"
+              id="set-default-browser"
+              role="menuitem"
+            >
+              <svg
+                class="menu-icon"
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path
+                  fill="currentColor"
+                  d="M12 2a10 10 0 1 0 10 10A10.011 10.011 0 0 0 12 2Zm6.93 9h-3.05a15.722 15.722 0 0 0-1.14-4.36A8.03 8.03 0 0 1 18.93 11ZM12 4.07A13.62 13.62 0 0 1 13.86 11h-3.72A13.62 13.62 0 0 1 12 4.07ZM9.26 6.64A15.722 15.722 0 0 0 8.12 11H5.07a8.03 8.03 0 0 1 4.19-4.36ZM4.26 13h3.05a15.722 15.722 0 0 0 1.14 4.36A8.03 8.03 0 0 1 4.26 13ZM12 19.93A13.62 13.62 0 0 1 10.14 13h3.72A13.62 13.62 0 0 1 12 19.93Zm2.74-2.57A15.722 15.722 0 0 0 15.88 13h3.05a8.03 8.03 0 0 1-4.19 4.36Z"
+                />
+              </svg>
+              <span>Set default browser</span>
+            </button>
+            <button class="profile-menu-item" id="logout" role="menuitem">
+              <!-- logout icon -->
+              <svg
+                class="menu-icon"
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path
+                  fill="currentColor"
+                  d="M16 13v-2H7V8l-5 4 5 4v-3zM20 3h-8v2h8v14h-8v2h8a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z"
+                />
+              </svg>
+              <span>Logout</span>
+            </button>
+            <div class="profile-menu-version" id="profile-menu-version">
+              Version: --
+            </div>
+          </div>
+          <input
+            type="file"
+            id="profile-file-input"
+            accept="image/*"
+            style="display: none"
+          />
+        </div>
+      </header>
+      <div class="side-bar" id="sidebar">
+        <div class="sidebar-header">
+          <h3>Tickets</h3>
+          <button
+            id="sidebar-toggle-btn"
+            class="sidebar-toggle-btn"
+            type="button"
+            aria-label="Toggle ticket sidebar lock"
+            aria-pressed="false"
+            title="Expand Tickets"
+          >
+            <svg
+              class="icon-chevron"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="m9 18 6-6-6-6" />
+            </svg>
+            <svg
+              class="icon-lock"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="5" y="11" width="14" height="10" rx="2" ry="2" />
+              <path d="M8 11V8a4 4 0 1 1 8 0v3" />
+            </svg>
+          </button>
+        </div>
+        <div class="sidebar-tickets" id="sidebar-tickets">
+          <div class="sidebar-empty">No tickets</div>
+        </div>
+      </div>
+      <main>
+        <div id="dashboard-home" class="dashboard-home">
+          <div id="dashboard-links-section" class="dashboard-links-section">
+            <div class="links-grid">
+              <button class="dash-link-btn" id="apply-leave-btn">
+                <span class="btn-icon">📅</span>
+                <span class="btn-text">Apply Leave</span>
+              </button>
+              <button class="dash-link-btn" id="synapse-link-btn" style="display: none">
+                <img src="../../assets/synapse-DrXXriqw.png" alt="Synapse" />
+                <span class="btn-text">Synapse</span>
+              </button>
+              <button class="dash-link-btn" id="veeva-link-btn">
+                <img src="../../assets/veeva-DRrx59Tv.ico" alt="Veeva Vault" />
+                <span class="btn-text">Veeva Vault</span>
+              </button>
+              <button class="dash-link-btn" id="contentgen-link-btn">
+                <img
+                  src="../../assets/contentgen-DZqnGDPH.png"
+                  data-theme-icon="contentgen"
+                  alt="ContentGen"
+                />
+                <span class="btn-text">ContentGen</span>
+              </button>
+              <button class="dash-link-btn" id="interactive-framework-link-btn">
+                <span class="if-badge if-badge-dashboard">IF</span>
+                <span class="btn-text">Interactive Framework</span>
+              </button>
+              <button class="dash-link-btn" id="knowledge-link-btn">
+                <img src="data:image/svg+xml,%3csvg%20width='32'%20height='32'%20viewBox='0%200%2032%2032'%20fill='none'%20xmlns='http://www.w3.org/2000/svg'%3e%3cpath%20d='M3.54861%207.80387L24.1938%2028.449C25.3693%2029.6245%2027.2765%2029.6245%2028.452%2028.449C29.6275%2027.2735%2029.6275%2025.3663%2028.452%2024.1908L7.8068%203.54568C6.63131%202.37019%204.7241%202.37019%203.54861%203.54568C2.37312%204.72117%202.37312%206.62838%203.54861%207.80387Z'%20fill='url(%23paint0_linear_4370_61406)'/%3e%3cpath%20d='M24.1938%203.54568L3.54861%2024.1908C2.37312%2025.3663%202.37312%2027.2735%203.54861%2028.449C4.7241%2029.6245%206.63131%2029.6245%207.8068%2028.449L28.452%207.80387C29.6275%206.62838%2029.6275%204.72117%2028.452%203.54568C27.2765%202.37019%2025.3693%202.37019%2024.1938%203.54568Z'%20fill='url(%23paint1_linear_4370_61406)'/%3e%3cpath%20d='M16.0002%2019.0141C17.6631%2019.0141%2019.0112%2017.666%2019.0112%2016.0031C19.0112%2014.3402%2017.6631%2012.9922%2016.0002%2012.9922C14.3373%2012.9922%2012.9893%2014.3402%2012.9893%2016.0031C12.9893%2017.666%2014.3373%2019.0141%2016.0002%2019.0141Z'%20fill='%23FFDA00'/%3e%3cdefs%3e%3clinearGradient%20id='paint0_linear_4370_61406'%20x1='28.4533'%20y1='28.4492'%20x2='3.54951'%20y2='3.5454'%20gradientUnits='userSpaceOnUse'%3e%3cstop%20stop-color='%2300FFAA'/%3e%3cstop%20offset='1'%20stop-color='%230080FF'/%3e%3c/linearGradient%3e%3clinearGradient%20id='paint1_linear_4370_61406'%20x1='3.54902'%20y1='28.4493'%20x2='28.4529'%20y2='3.54551'%20gradientUnits='userSpaceOnUse'%3e%3cstop%20stop-color='%237D0DC5'/%3e%3cstop%20offset='1'%20stop-color='%23FF1B92'/%3e%3c/linearGradient%3e%3c/defs%3e%3c/svg%3e" alt="Knowledge Hub" />
+                <span class="btn-text">Knowledge Hub</span>
+              </button>
+              <button class="dash-link-btn" id="pdftoemail-link-btn">
+                <img src="data:image/svg+xml,%3csvg%20width='32'%20height='32'%20viewBox='0%200%2032%2032'%20fill='none'%20xmlns='http://www.w3.org/2000/svg'%3e%3cpath%20d='M3.54861%207.80387L24.1938%2028.449C25.3693%2029.6245%2027.2765%2029.6245%2028.452%2028.449C29.6275%2027.2735%2029.6275%2025.3663%2028.452%2024.1908L7.8068%203.54568C6.63131%202.37019%204.7241%202.37019%203.54861%203.54568C2.37312%204.72117%202.37312%206.62838%203.54861%207.80387Z'%20fill='url(%23paint0_linear_4370_61406)'/%3e%3cpath%20d='M24.1938%203.54568L3.54861%2024.1908C2.37312%2025.3663%202.37312%2027.2735%203.54861%2028.449C4.7241%2029.6245%206.63131%2029.6245%207.8068%2028.449L28.452%207.80387C29.6275%206.62838%2029.6275%204.72117%2028.452%203.54568C27.2765%202.37019%2025.3693%202.37019%2024.1938%203.54568Z'%20fill='url(%23paint1_linear_4370_61406)'/%3e%3cpath%20d='M16.0002%2019.0141C17.6631%2019.0141%2019.0112%2017.666%2019.0112%2016.0031C19.0112%2014.3402%2017.6631%2012.9922%2016.0002%2012.9922C14.3373%2012.9922%2012.9893%2014.3402%2012.9893%2016.0031C12.9893%2017.666%2014.3373%2019.0141%2016.0002%2019.0141Z'%20fill='%23FFDA00'/%3e%3cdefs%3e%3clinearGradient%20id='paint0_linear_4370_61406'%20x1='28.4533'%20y1='28.4492'%20x2='3.54951'%20y2='3.5454'%20gradientUnits='userSpaceOnUse'%3e%3cstop%20stop-color='%2300FFAA'/%3e%3cstop%20offset='1'%20stop-color='%230080FF'/%3e%3c/linearGradient%3e%3clinearGradient%20id='paint1_linear_4370_61406'%20x1='3.54902'%20y1='28.4493'%20x2='28.4529'%20y2='3.54551'%20gradientUnits='userSpaceOnUse'%3e%3cstop%20stop-color='%237D0DC5'/%3e%3cstop%20offset='1'%20stop-color='%23FF1B92'/%3e%3c/linearGradient%3e%3c/defs%3e%3c/svg%3e" alt="PDF2EMAIL" />
+                <span class="btn-text">PDF2EMAIL</span>
+              </button>
+              <button class="dash-link-btn" id="sitesnap-link-btn">
+                <img src="data:image/svg+xml,%3csvg%20width='32'%20height='32'%20viewBox='0%200%2032%2032'%20fill='none'%20xmlns='http://www.w3.org/2000/svg'%3e%3cpath%20d='M3.54861%207.80387L24.1938%2028.449C25.3693%2029.6245%2027.2765%2029.6245%2028.452%2028.449C29.6275%2027.2735%2029.6275%2025.3663%2028.452%2024.1908L7.8068%203.54568C6.63131%202.37019%204.7241%202.37019%203.54861%203.54568C2.37312%204.72117%202.37312%206.62838%203.54861%207.80387Z'%20fill='url(%23paint0_linear_4370_61406)'/%3e%3cpath%20d='M24.1938%203.54568L3.54861%2024.1908C2.37312%2025.3663%202.37312%2027.2735%203.54861%2028.449C4.7241%2029.6245%206.63131%2029.6245%207.8068%2028.449L28.452%207.80387C29.6275%206.62838%2029.6275%204.72117%2028.452%203.54568C27.2765%202.37019%2025.3693%202.37019%2024.1938%203.54568Z'%20fill='url(%23paint1_linear_4370_61406)'/%3e%3cpath%20d='M16.0002%2019.0141C17.6631%2019.0141%2019.0112%2017.666%2019.0112%2016.0031C19.0112%2014.3402%2017.6631%2012.9922%2016.0002%2012.9922C14.3373%2012.9922%2012.9893%2014.3402%2012.9893%2016.0031C12.9893%2017.666%2014.3373%2019.0141%2016.0002%2019.0141Z'%20fill='%23FFDA00'/%3e%3cdefs%3e%3clinearGradient%20id='paint0_linear_4370_61406'%20x1='28.4533'%20y1='28.4492'%20x2='3.54951'%20y2='3.5454'%20gradientUnits='userSpaceOnUse'%3e%3cstop%20stop-color='%2300FFAA'/%3e%3cstop%20offset='1'%20stop-color='%230080FF'/%3e%3c/linearGradient%3e%3clinearGradient%20id='paint1_linear_4370_61406'%20x1='3.54902'%20y1='28.4493'%20x2='28.4529'%20y2='3.54551'%20gradientUnits='userSpaceOnUse'%3e%3cstop%20stop-color='%237D0DC5'/%3e%3cstop%20offset='1'%20stop-color='%23FF1B92'/%3e%3c/linearGradient%3e%3c/defs%3e%3c/svg%3e" alt="SiteSnap Studio" />
+                <span class="btn-text">SiteSnap Studio</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="dashboard-home-header section-spacer">
+            <h2>My Apps</h2>
+          </div>
+
+          <div id="dashboard-apps-grid" class="dashboard-apps-grid">
+            <div class="loading-apps">Loading your apps...</div>
+          </div>
+        </div>
+
+        <!-- App Store Container -->
+        <div class="app-store-container hidden" id="app-store-container">
+          <button
+            id="app-store-maximize-btn"
+            class="app-store-maximize-btn"
+            aria-label="Maximize/Restore"
+            title="Maximize"
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+            </svg>
+          </button>
+          <button
+            id="app-store-close-btn"
+            class="app-store-close-btn"
+            aria-label="Close"
+            title="Close"
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+          <div id="app-store-content"></div>
+        </div>
+      </main>
+    </div>
+
+    <div
+      id="toast-container"
+      role="region"
+      aria-live="polite"
+      aria-atomic="true"
+    ></div>
+
+    <div
+      id="change-password-modal"
+      class="modal-overlay hidden"
+      role="dialog"
+      aria-labelledby="modal-title"
+      aria-hidden="true"
+    >
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h3 id="modal-title">Change Password</h3>
+          <button
+            class="modal-close-btn"
+            id="modal-close-btn"
+            aria-label="Close"
+            title="Close"
+          ></button>
+        </div>
+        <form id="change-password-form" class="modal-form">
+          <div class="form-group">
+            <label for="old-password">Current Password</label>
+            <div class="password-input-wrapper">
+              <input
+                type="password"
+                id="old-password"
+                name="oldPassword"
+                required
+                aria-label="Current Password"
+              />
+              <button
+                type="button"
+                class="password-visibility-btn"
+                data-target="old-password"
+                aria-label="Show current password"
+                title="Show current password"
+              >Show</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="new-password">New Password</label>
+            <div class="password-input-wrapper">
+              <input
+                type="password"
+                id="new-password"
+                name="newPassword"
+                required
+                aria-label="New Password"
+              />
+              <button
+                type="button"
+                class="password-visibility-btn"
+                data-target="new-password"
+                aria-label="Show new password"
+                title="Show new password"
+              >Show</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="confirm-password">Confirm New Password</label>
+            <div class="password-input-wrapper">
+              <input
+                type="password"
+                id="confirm-password"
+                name="confirmPassword"
+                required
+                aria-label="Confirm New Password"
+              />
+              <button
+                type="button"
+                class="password-visibility-btn"
+                data-target="confirm-password"
+                aria-label="Show confirm password"
+                title="Show confirm password"
+              >Show</button>
+            </div>
+          </div>
+          <p id="change-password-hint" class="modal-helper-text hidden"></p>
+          <div class="modal-actions">
+            <button
+              type="button"
+              class="modal-btn modal-btn-secondary"
+              id="modal-cancel-btn"
+            >
+              Cancel
+            </button>
+            <button type="submit" class="modal-btn modal-btn-primary">
+              Change Password
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+    <div
+      id="default-browser-modal"
+      class="modal-overlay hidden"
+      role="dialog"
+      aria-labelledby="default-browser-title"
+      aria-hidden="true"
+    >
+      <div class="modal-dialog default-browser-dialog">
+        <div class="modal-header">
+          <h3 id="default-browser-title">Use OneView For Web Links</h3>
+          <button
+            class="modal-close-btn"
+            id="default-browser-close-btn"
+            aria-label="Close"
+            title="Close"
+          ></button>
+        </div>
+        <div class="update-install-body default-browser-body">
+          <div id="default-browser-step-defaults" class="default-browser-step">
+            <div class="default-browser-hero">
+              <div class="default-browser-hero-icon" aria-hidden="true">
+                <svg
+                  viewBox="0 0 24 24"
+                  width="24"
+                  height="24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path>
+                  <path d="M9 22v-6h6v6"></path>
+                  <path d="M15 6h4"></path>
+                  <path d="M17 4v4"></path>
+                </svg>
+              </div>
+              <div class="default-browser-hero-copy">
+                <p id="default-browser-message">
+                  Open links from Windows, VS Code, and HTML files directly in OneView.
+                </p>
+                <p class="default-browser-subtext">
+                  External links open in a detached window first, and you can attach them back into the main app anytime.
+                </p>
+              </div>
+            </div>
+            <div class="default-browser-benefits" aria-label="Benefits">
+              <span class="default-browser-benefit-pill">Open from browser links</span>
+              <span class="default-browser-benefit-pill">Open from HTML files</span>
+              <span class="default-browser-benefit-pill">Works with detached windows</span>
+            </div>
+            <div class="default-browser-steps">
+              <h4>What to do</h4>
+              <ol>
+                <li>Click <strong>Open Windows Settings</strong>.</li>
+                <li>Select <strong>OneView</strong> in the app page that opens.</li>
+                <li>Enable it for web links and HTML file types that still need setup.</li>
+              </ol>
+            </div>
+            <div class="default-browser-visual-guide" aria-label="Quick setup preview">
+              <div class="default-browser-visual-header">
+                <div class="default-browser-visual-breadcrumb">Apps &gt; Default apps &gt; OneView</div>
+              </div>
+              <div class="default-browser-visual-card">
+                <div class="default-browser-visual-banner">
+                  <span>Make OneView your default browser</span>
+                  <button type="button" class="default-browser-visual-banner-btn">Set default</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="default-browser-step-teams" class="default-browser-step hidden">
+            <div class="default-browser-hero">
+              <div class="default-browser-hero-icon default-browser-hero-icon-teams" aria-hidden="true">
+                <svg
+                  viewBox="0 0 24 24"
+                  width="24"
+                  height="24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <rect x="4" y="6" width="10" height="12" rx="2"></rect>
+                  <path d="M14 8h4a2 2 0 0 1 2 2v5a3 3 0 0 1-3 3h-3"></path>
+                  <path d="M8 10h4"></path>
+                  <path d="M10 10v6"></path>
+                </svg>
+              </div>
+              <div class="default-browser-hero-copy">
+                <p id="teams-followup-message">
+                  One more thing: Teams can still force links into Edge even after Windows defaults are set.
+                </p>
+                <p class="default-browser-subtext">
+                  In Teams, change the link preference to <strong>Default browser</strong> so chat and message links also open in OneView.
+                </p>
+              </div>
+            </div>
+            <div class="default-browser-steps">
+              <h4>Teams path</h4>
+              <ol>
+                <li>Open <strong>Teams</strong>.</li>
+                <li>Go to <strong>Profile &gt; Settings &gt; Files and links</strong>.</li>
+                <li>Set <strong>Link open preference</strong> to <strong>Default browser</strong>.</li>
+              </ol>
+            </div>
+            <div class="default-browser-visual-guide" aria-label="Teams setup preview">
+              <div class="default-browser-visual-header">
+                <div class="default-browser-visual-breadcrumb">Teams &gt; Settings</div>
+                <div class="default-browser-visual-search">Files and links</div>
+              </div>
+              <div class="default-browser-visual-card default-browser-visual-card-teams">
+                <div class="default-browser-visual-app">
+                  <div class="default-browser-visual-app-icon default-browser-visual-app-icon-teams">T</div>
+                  <div class="default-browser-visual-app-copy">
+                    <strong>Files and links</strong>
+                    <span>Change how Teams opens links from chats and messages</span>
+                  </div>
+                </div>
+                <div class="default-browser-visual-tags">
+                  <span>Profile</span>
+                  <span>Settings</span>
+                  <span>Files and links</span>
+                  <span>Default browser</span>
+                </div>
+                <div class="default-browser-visual-tip">
+                  If Teams is already set to Default browser, you can just finish here.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="default-browser-actions-defaults" class="modal-actions">
+          <button
+            type="button"
+            class="modal-btn modal-btn-secondary"
+            id="default-browser-later-btn"
+          >
+            Later
+          </button>
+          <button
+            type="button"
+            class="modal-btn modal-btn-primary"
+            id="default-browser-open-settings-btn"
+          >
+            Open Windows Settings
+          </button>
+        </div>
+        <div id="default-browser-actions-teams" class="modal-actions hidden">
+          <button
+            type="button"
+            class="modal-btn modal-btn-secondary"
+            id="default-browser-teams-done-btn"
+          >
+            Already set
+          </button>
+          <button
+            type="button"
+            class="modal-btn modal-btn-primary"
+            id="default-browser-open-teams-btn"
+          >
+            Let’s set up Teams
+          </button>
+        </div>
+      </div>
+    </div>
+    <div
+      id="update-install-modal"
+      class="modal-overlay hidden"
+      role="dialog"
+      aria-labelledby="update-install-title"
+      aria-hidden="true"
+    >
+      <div class="modal-dialog update-install-dialog">
+        <div class="modal-header">
+          <h3 id="update-install-title">Update Ready</h3>
+          <button
+            class="modal-close-btn"
+            id="update-install-close-btn"
+            aria-label="Close"
+            title="Close"
+          ></button>
+        </div>
+        <div class="update-install-body">
+          <p id="update-install-message">
+            A new version is ready to install.
+          </p>
+        </div>
+        <div class="modal-actions">
+          <button
+            type="button"
+            class="modal-btn modal-btn-secondary"
+            id="update-install-later-btn"
+          >
+            Later
+          </button>
+          <button
+            type="button"
+            class="modal-btn modal-btn-primary"
+            id="update-install-confirm-btn"
+          >
+            Restart and Install
+          </button>
+        </div>
+      </div>
+    </div>
+    <div
+      id="startup-diagnostics-modal"
+      class="modal-overlay hidden"
+      role="dialog"
+      aria-labelledby="startup-diagnostics-title"
+      aria-hidden="true"
+    >
+      <div class="modal-dialog startup-diagnostics-dialog">
+        <div class="modal-header">
+          <h3 id="startup-diagnostics-title">Startup Diagnostics</h3>
+          <button
+            class="modal-close-btn"
+            id="startup-diagnostics-close-btn"
+            aria-label="Close"
+            title="Close"
+          ></button>
+        </div>
+        <div class="startup-diagnostics-body">
+          <div class="startup-diagnostics-toolbar">
+            <button
+              type="button"
+              class="modal-btn modal-btn-secondary"
+              id="startup-diagnostics-refresh-btn"
+            >
+              Refresh
+            </button>
+            <button
+              type="button"
+              class="modal-btn modal-btn-secondary"
+              id="startup-diagnostics-perf-btn"
+            >
+              Enable Perf Logging
+            </button>
+            <button
+              type="button"
+              class="modal-btn modal-btn-secondary"
+              id="startup-diagnostics-rollback-btn"
+            >
+              Dev Builds
+            </button>
+          </div>
+          <div class="startup-diagnostics-meta" id="startup-diagnostics-meta">
+            Loading diagnostics...
+          </div>
+          <div class="startup-diagnostics-section">
+            <h4>Startup Log</h4>
+            <pre id="startup-diagnostics-startup-log">Loading...</pre>
+          </div>
+          <div class="startup-diagnostics-section">
+            <h4>Perf Log</h4>
+            <pre id="startup-diagnostics-perf-log">Perf logging is disabled.</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div
+      id="rollback-builds-modal"
+      class="modal-overlay hidden"
+      role="dialog"
+      aria-labelledby="rollback-builds-title"
+      aria-hidden="true"
+    >
+      <div class="modal-dialog startup-diagnostics-dialog rollback-builds-dialog">
+        <div class="modal-header">
+          <h3 id="rollback-builds-title">Dev Builds</h3>
+          <button
+            class="modal-close-btn"
+            id="rollback-builds-close-btn"
+            aria-label="Close"
+            title="Close"
+          ></button>
+        </div>
+        <div class="startup-diagnostics-body">
+          <div class="startup-diagnostics-meta" id="rollback-builds-meta">
+            Choose a dev release to download and install for testing.
+          </div>
+          <div id="rollback-builds-list" class="rollback-builds-list">
+            Loading available builds...
+          </div>
+        </div>
+      </div>
+    </div>
+    <div
+      id="leave-application-modal"
+      class="modal-overlay hidden"
+      role="dialog"
+      aria-labelledby="leave-modal-title"
+      aria-hidden="true"
+    >
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h3 id="leave-modal-title">Apply for Leave</h3>
+          <button
+            class="modal-close-btn"
+            id="leave-modal-close-btn"
+            aria-label="Close"
+            title="Close"
+          ></button>
+        </div>
+        <form id="leave-application-form" class="modal-form">
+          <div class="form-group radio-group">
+            <label>Leave Pattern</label>
+            <div class="radio-options">
+              <input type="radio" id="leave-full-day" name="leavePattern" value="full" checked />
+              <label for="leave-full-day">Full Day</label>
+              <input type="radio" id="leave-half-day" name="leavePattern" value="half" />
+              <label for="leave-half-day">Half Day</label>
+            </div>
+          </div>
+          <div id="full-day-dates-container">
+            <div class="form-group">
+              <label>Select Date(s)</label>
+              <input 
+                type="text" 
+                id="leave-date-range-input" 
+                class="date-range-input" 
+                placeholder="Select date range" 
+                readonly 
+              />
+              <div id="leave-date-range-picker" class="date-range-picker hidden">
+                <div class="date-picker-header">
+                  <button type="button" class="date-picker-nav-btn prev-month" title="Previous month">&lt;</button>
+                  <div class="date-picker-month-year" id="leave-picker-month-year"></div>
+                  <button type="button" class="date-picker-nav-btn next-month" title="Next month">&gt;</button>
+                </div>
+                <div class="date-picker-weekdays">
+                  <div class="weekday">Sun</div>
+                  <div class="weekday">Mon</div>
+                  <div class="weekday">Tue</div>
+                  <div class="weekday">Wed</div>
+                  <div class="weekday">Thu</div>
+                  <div class="weekday">Fri</div>
+                  <div class="weekday">Sat</div>
+                </div>
+                <div class="date-picker-days" id="leave-picker-days"></div>
+              </div>
+              <input type="hidden" id="leave-start-date" name="startDate" required />
+              <input type="hidden" id="leave-end-date" name="endDate" required />
+            </div>
+          </div>
+          <div id="half-day-date-container" class="hidden">
+            <div class="form-group">
+              <label>Select Date</label>
+              <input 
+                type="text" 
+                id="leave-half-day-input" 
+                class="date-range-input" 
+                placeholder="Select date" 
+                readonly 
+              />
+              <div id="leave-half-day-picker" class="date-range-picker hidden">
+                <div class="date-picker-header">
+                  <button type="button" class="date-picker-nav-btn prev-month" title="Previous month">&lt;</button>
+                  <div class="date-picker-month-year" id="leave-half-picker-month-year"></div>
+                  <button type="button" class="date-picker-nav-btn next-month" title="Next month">&gt;</button>
+                </div>
+                <div class="date-picker-weekdays">
+                  <div class="weekday">Sun</div>
+                  <div class="weekday">Mon</div>
+                  <div class="weekday">Tue</div>
+                  <div class="weekday">Wed</div>
+                  <div class="weekday">Thu</div>
+                  <div class="weekday">Fri</div>
+                  <div class="weekday">Sat</div>
+                </div>
+                <div class="date-picker-days" id="leave-half-picker-days"></div>
+              </div>
+              <input type="hidden" id="leave-single-date" name="singleDate" required />
+            </div>
+            <div class="form-group">
+              <label for="leave-half-day-type"><br>Half Day Type</label>
+              <select id="leave-half-day-type" name="halfDayType" required>
+                <option value="">-- Select --</option>
+                <option value="first">First Half</option>
+                <option value="second">Second Half</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="leave-category-type">Leave Type</label>
+            <select id="leave-category-type" name="leaveType" required>
+              <option value="">-- Select --</option>
+              <option value="casual">Casual</option>
+              <option value="sick">Sick</option>
+              <option value="earned">Earned</option>
+              
+            </select>
+          </div>
+          <div class="modal-actions">
+            <button
+              type="button"
+              class="modal-btn modal-btn-secondary"
+              id="leave-modal-cancel-btn"
+            >
+              Cancel
+            </button>
+            <button type="submit" class="modal-btn modal-btn-primary">
+              Submit Application
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Connectivity Modal -->
+    <div id="connectivity-modal-overlay" class="modal-overlay hidden connectivity-modal-overlay">
+      <div class="modal-dialog connectivity-modal-dialog">
+        <div class="modal-content connectivity-modal-content">
+          <!-- Loading Spinner -->
+          <div class="connectivity-spinner"></div>
+
+          <!-- Status Message -->
+          <p class="connectivity-status-message">
+            Checking connection...
+          </p>
+          <p class="connectivity-status-message connectivity-status-subtext">
+            Please reconnect to VPN or Internet
+          </p>
+
+          <!-- Countdown Timer -->
+          <div class="connectivity-countdown">
+            <span id="connectivity-countdown-timer" class="countdown-timer">15:00</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
