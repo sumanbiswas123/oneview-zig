@@ -22,18 +22,28 @@ let monitorState = {
  * Helper function to probe a URL for reachability
  * @param {string} targetUrl - URL to probe
  * @param {number} timeoutMs - Timeout in milliseconds (default 4000)
+ * @param {boolean} isVpn - Whether the URL is a VPN target
  * @returns {Promise<boolean>} - True if reachable, false otherwise
  */
-function probeUrl(targetUrl, timeoutMs = 4000) {
+function probeUrl(targetUrl, timeoutMs = 4000, isVpn = false) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  return fetch(targetUrl, {
+  const fetchOptions = {
     method: "GET",
-    mode: "no-cors",
     cache: "no-store",
     signal: controller.signal,
-  })
+  };
+
+  if (isVpn) {
+    fetchOptions.mode = "cors";
+    fetchOptions.redirect = "manual";
+  } else {
+    fetchOptions.mode = "no-cors";
+    fetchOptions.redirect = "follow";
+  }
+
+  return fetch(targetUrl, fetchOptions)
     .then(() => {
       clearTimeout(timer);
       return true;
@@ -78,7 +88,7 @@ async function checkConnectivity() {
       "[Connectivity Monitor] Checking VPN connectivity via",
       monitorState.corpPingUrl
     );
-    const vpnConnected = await probeUrl(monitorState.corpPingUrl, 4500);
+    const vpnConnected = await probeUrl(monitorState.corpPingUrl, 4500, true);
     console.debug(
       `[Connectivity Monitor] VPN check: ${vpnConnected ? "OK" : "FAILED"}`
     );

@@ -20,4 +20,4 @@ Write-Host "3/3: Packaging Installer (Inno Setup)..." -ForegroundColor Cyan
 Write-Host "==============================================" -ForegroundColor Cyan
 & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" oneview.iss
 
-Write-Host "`nBuild complete! Installer generated at setup.exe." -ForegroundColor Green
+Write-Host "`nBuild complete! Installer generated at OneViewSetup.exe." -ForegroundColor Green

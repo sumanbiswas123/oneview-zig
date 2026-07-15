@@ -181,6 +181,7 @@ async function initDetachedShell() {
     if (!window.api?.attachDetachedViewWindow) return;
     const tabsList = document.getElementById("tabsList");
     const activeTab = tabsList?.querySelector(".tab.active .tab-title");
+    const activeTabEl = tabsList?.querySelector(".tab.active");
     const activeWebview = document.querySelector(
       "#webviews-container .webcontent-pane.active",
     );
@@ -194,6 +195,16 @@ async function initDetachedShell() {
       title: nextTitle,
       partition: initialPartition,
     });
+
+    const allTabs = Array.from(tabsList?.querySelectorAll(".tab") || []);
+    if (allTabs.length > 1) {
+      const closeBtn = activeTabEl?.querySelector(".close-tab-btn");
+      if (closeBtn) {
+        closeBtn.click();
+      }
+    } else {
+      window.api?.close?.();
+    }
   });
 
   document.getElementById("min-btn")?.addEventListener("click", () => {

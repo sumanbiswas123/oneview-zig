@@ -121,6 +121,198 @@ fn runShellCmd(allocator: std.mem.Allocator, cmd: []const u8) bool {
     return exit_code == 0;
 }
 
+fn runCmdProcess(allocator: std.mem.Allocator, exe: []const u8, args: []const u8) bool {
+    const cmd_str = std.fmt.allocPrint(allocator, "\"{s}\" {s}", .{ exe, args }) catch return false;
+    defer allocator.free(cmd_str);
+    const cmdline = allocator.dupeZ(u8, cmd_str) catch return false;
+    defer allocator.free(cmdline);
+    var si = STARTUPINFOA{};
+    var pi = PROCESS_INFORMATION{};
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    const ok = CreateProcessA(null, cmdline.ptr, null, null, 0, CREATE_NO_WINDOW, null, null, &si, &pi);
+    if (ok == 0) return false;
+    _ = WaitForSingleObject(pi.hProcess, 180000); // 3 min timeout
+    var exit_code: u32 = 1;
+    _ = GetExitCodeProcess(pi.hProcess, &exit_code);
+    _ = CloseHandle(pi.hProcess);
+    _ = CloseHandle(pi.hThread);
+    return exit_code == 0;
+}
+
+fn eqlIgnoreCase(a: []const u8, b: []const u8) bool {
+    if (a.len != b.len) return false;
+    for (a, 0..) |char_a, i| {
+        const char_b = b[i];
+        const lower_a = if (char_a >= 'A' and char_a <= 'Z') char_a + 32 else char_a;
+        const lower_b = if (char_b >= 'A' and char_b <= 'Z') char_b + 32 else char_b;
+        if (lower_a != lower_b) return false;
+    }
+    return true;
+}
+
+fn startsWithIgnoreCase(str: []const u8, prefix: []const u8) bool {
+    if (str.len < prefix.len) return false;
+    return eqlIgnoreCase(str[0..prefix.len], prefix);
+}
+
+fn resolveLaunchableExePath(allocator: std.mem.Allocator, target_path: []const u8) ?[]const u8 {
+    const WIN32_FIND_DATAA = extern struct {
+        dwFileAttributes: u32,
+        ftCreationTime: [8]u8,
+        ftLastAccessTime: [8]u8,
+        ftLastWriteTime: [8]u8,
+        nFileSizeHigh: u32,
+        nFileSizeLow: u32,
+        dwReserved0: u32,
+        dwReserved1: u32,
+        cFileName: [260]u8,
+        cAlternateFileName: [14]u8,
+    };
+
+    const win32 = struct {
+        extern "kernel32" fn FindFirstFileA(lpFileName: [*:0]const u8, lpFindFileData: *WIN32_FIND_DATAA) callconv(.winapi) ?*anyopaque;
+        extern "kernel32" fn FindNextFileA(hFindFile: ?*anyopaque, lpFindFileData: *WIN32_FIND_DATAA) callconv(.winapi) i32;
+        extern "kernel32" fn FindClose(hFindFile: ?*anyopaque) callconv(.winapi) i32;
+    };
+
+    // Check if the path itself is an existing file
+    const target_path_z = allocator.dupeZ(u8, target_path) catch return null;
+    defer allocator.free(target_path_z);
+    if (fopen(target_path_z, "rb")) |f| {
+        _ = fclose(f);
+        return allocator.dupe(u8, target_path) catch null;
+    }
+
+    var best_exe: ?[]const u8 = null;
+    var best_score: i32 = -1;
+    const dir_name = std.fs.path.basename(target_path);
+
+    // Build the search pattern: target_path + "\*"
+    const search_pattern = std.fs.path.join(allocator, &.{ target_path, "*" }) catch return null;
+    defer allocator.free(search_pattern);
+    const search_pattern_z = allocator.dupeZ(u8, search_pattern) catch return null;
+    defer allocator.free(search_pattern_z);
+
+    var find_data = WIN32_FIND_DATAA{
+        .dwFileAttributes = 0,
+        .ftCreationTime = [_]u8{0} ** 8,
+        .ftLastAccessTime = [_]u8{0} ** 8,
+        .ftLastWriteTime = [_]u8{0} ** 8,
+        .nFileSizeHigh = 0,
+        .nFileSizeLow = 0,
+        .dwReserved0 = 0,
+        .dwReserved1 = 0,
+        .cFileName = [_]u8{0} ** 260,
+        .cAlternateFileName = [_]u8{0} ** 14,
+    };
+
+    const INVALID_HANDLE_VALUE: ?*anyopaque = @as(?*anyopaque, @ptrFromInt(@as(usize, @bitCast(@as(isize, -1)))));
+    const handle = win32.FindFirstFileA(search_pattern_z.ptr, &find_data);
+
+    if (handle != null and handle != INVALID_HANDLE_VALUE) {
+        defer _ = win32.FindClose(handle);
+        var has_next = true;
+        while (has_next) {
+            const filename_len = std.mem.indexOfScalar(u8, &find_data.cFileName, 0) orelse find_data.cFileName.len;
+            const entry_name = find_data.cFileName[0..filename_len];
+            const is_dir = (find_data.dwFileAttributes & 0x10) != 0;
+
+            if (!is_dir) {
+                if (std.mem.endsWith(u8, entry_name, ".exe") or std.mem.endsWith(u8, entry_name, ".EXE")) {
+                    if (!startsWithIgnoreCase(entry_name, "uninstall")) {
+                        var score: i32 = 5;
+                        const ext_idx = std.mem.indexOf(u8, entry_name, ".");
+                        const entry_base = if (ext_idx) |idx| entry_name[0..idx] else entry_name;
+
+                        if (eqlIgnoreCase(entry_base, dir_name)) {
+                            score += 20;
+                        }
+                        if (score > best_score) {
+                            best_score = score;
+                            if (best_exe) |old| allocator.free(old);
+                            best_exe = allocator.dupe(u8, entry_name) catch null;
+                        }
+                    }
+                }
+            } else {
+                if (!std.mem.eql(u8, entry_name, ".") and !std.mem.eql(u8, entry_name, "..")) {
+                    const sub_path = std.fs.path.join(allocator, &.{ target_path, entry_name }) catch {
+                        has_next = win32.FindNextFileA(handle, &find_data) != 0;
+                        continue;
+                    };
+                    defer allocator.free(sub_path);
+
+                    const sub_search = std.fs.path.join(allocator, &.{ sub_path, "*" }) catch {
+                        has_next = win32.FindNextFileA(handle, &find_data) != 0;
+                        continue;
+                    };
+                    defer allocator.free(sub_search);
+                    const sub_search_z = allocator.dupeZ(u8, sub_search) catch {
+                        has_next = win32.FindNextFileA(handle, &find_data) != 0;
+                        continue;
+                    };
+                    defer allocator.free(sub_search_z);
+
+                    var sub_find_data = WIN32_FIND_DATAA{
+                        .dwFileAttributes = 0,
+                        .ftCreationTime = [_]u8{0} ** 8,
+                        .ftLastAccessTime = [_]u8{0} ** 8,
+                        .ftLastWriteTime = [_]u8{0} ** 8,
+                        .nFileSizeHigh = 0,
+                        .nFileSizeLow = 0,
+                        .dwReserved0 = 0,
+                        .dwReserved1 = 0,
+                        .cFileName = [_]u8{0} ** 260,
+                        .cAlternateFileName = [_]u8{0} ** 14,
+                    };
+                    const sub_handle = win32.FindFirstFileA(sub_search_z.ptr, &sub_find_data);
+                    if (sub_handle != null and sub_handle != INVALID_HANDLE_VALUE) {
+                        defer _ = win32.FindClose(sub_handle);
+                        var sub_has_next = true;
+                        while (sub_has_next) {
+                            const sub_filename_len = std.mem.indexOfScalar(u8, &sub_find_data.cFileName, 0) orelse sub_find_data.cFileName.len;
+                            const sub_entry_name = sub_find_data.cFileName[0..sub_filename_len];
+                            const sub_is_dir = (sub_find_data.dwFileAttributes & 0x10) != 0;
+
+                            if (!sub_is_dir) {
+                                if (std.mem.endsWith(u8, sub_entry_name, ".exe") or std.mem.endsWith(u8, sub_entry_name, ".EXE")) {
+                                    if (!startsWithIgnoreCase(sub_entry_name, "uninstall")) {
+                                        var score: i32 = 0;
+                                        const ext_idx = std.mem.indexOf(u8, sub_entry_name, ".");
+                                        const entry_base = if (ext_idx) |idx| sub_entry_name[0..idx] else sub_entry_name;
+
+                                        if (eqlIgnoreCase(entry_base, dir_name)) {
+                                            score += 20;
+                                        }
+                                        if (score > best_score) {
+                                            best_score = score;
+                                            if (best_exe) |old| allocator.free(old);
+                                            best_exe = std.fs.path.join(allocator, &.{ entry_name, sub_entry_name }) catch null;
+                                        }
+                                    }
+                                }
+                            }
+                            sub_has_next = win32.FindNextFileA(sub_handle, &sub_find_data) != 0;
+                        }
+                    }
+                }
+            }
+
+            has_next = win32.FindNextFileA(handle, &find_data) != 0;
+        }
+    }
+
+    if (best_exe) |exe| {
+        const full = std.fs.path.join(allocator, &.{ target_path, exe }) catch return null;
+        allocator.free(exe);
+        return full;
+    }
+
+    return allocator.dupe(u8, target_path) catch null;
+}
+
+
+
 // ─── C stdlib for file I/O ───────────────────────────────────────────────────
 extern "c" fn fopen(path: [*:0]const u8, mode: [*:0]const u8) callconv(.c) ?*anyopaque;
 extern "c" fn fseek(stream: *anyopaque, offset: c_long, whence: c_int) callconv(.c) c_int;
@@ -440,17 +632,36 @@ fn proxyToBackendPort(allocator: std.mem.Allocator, client_sock: usize, raw_requ
     else
         full_path;
 
+    // Try to extract Origin header from raw_request
+    var client_origin: []const u8 = "";
+    var lines_origin = std.mem.splitSequence(u8, raw_request, "\r\n");
+    _ = lines_origin.next(); // skip first line
+    while (lines_origin.next()) |line| {
+        if (line.len == 0) break;
+        if (startsWithCI(line, "origin:")) {
+            client_origin = std.mem.trim(u8, line["origin:".len..], " \t");
+            break;
+        }
+    }
+
+    const origin_val = if (client_origin.len > 0) client_origin else PROXY_ORIGIN;
+
     // Handle OPTIONS preflight locally
     if (std.mem.eql(u8, method, "OPTIONS")) {
-        const preflight =
+        const preflight = std.fmt.allocPrint(allocator,
             "HTTP/1.0 204 No Content\r\n" ++
-            "Access-Control-Allow-Origin: " ++ PROXY_ORIGIN ++ "\r\n" ++
+            "Access-Control-Allow-Origin: {s}\r\n" ++
             "Access-Control-Allow-Credentials: true\r\n" ++
             "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS, PATCH\r\n" ++
             "Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, Cookie, Accept\r\n" ++
             "Access-Control-Max-Age: 86400\r\n" ++
-            "Content-Length: 0\r\n\r\n";
-        _ = send(client_sock, preflight.ptr, @intCast(preflight.len), 0);
+            "Content-Length: 0\r\n\r\n",
+            .{origin_val}
+        ) catch "";
+        defer if (preflight.len > 0) allocator.free(preflight);
+        if (preflight.len > 0) {
+            _ = send(client_sock, preflight.ptr, @intCast(preflight.len), 0);
+        }
         return;
     }
 
@@ -533,8 +744,60 @@ fn proxyToBackendPort(allocator: std.mem.Allocator, client_sock: usize, raw_requ
     var has_acac = false;
     while (resp_lines.next()) |rl| {
         if (rl.len == 0) continue;
+        if (startsWithCI(rl, "location:")) {
+            const loc_val = std.mem.trim(u8, rl["location:".len..], " \t");
+            
+            var match1_buf: [64]u8 = undefined;
+            const match1 = std.fmt.bufPrint(&match1_buf, "http://127.0.0.1:{d}", .{backend_port}) catch "";
+            var match2_buf: [64]u8 = undefined;
+            const match2 = std.fmt.bufPrint(&match2_buf, "http://localhost:{d}", .{backend_port}) catch "";
+            
+            if (match1.len > 0 and std.mem.startsWith(u8, loc_val, match1)) {
+                const remaining = loc_val[match1.len..];
+                if (std.mem.startsWith(u8, remaining, prefix)) {
+                    out.print(allocator, "Location: http://127.0.0.1:9731{s}\r\n", .{ remaining }) catch return;
+                } else {
+                    out.print(allocator, "Location: http://127.0.0.1:9731{s}{s}\r\n", .{ prefix, remaining }) catch return;
+                }
+            } else if (match2.len > 0 and std.mem.startsWith(u8, loc_val, match2)) {
+                const remaining = loc_val[match2.len..];
+                if (std.mem.startsWith(u8, remaining, prefix)) {
+                    out.print(allocator, "Location: http://127.0.0.1:9731{s}\r\n", .{ remaining }) catch return;
+                } else {
+                    out.print(allocator, "Location: http://127.0.0.1:9731{s}{s}\r\n", .{ prefix, remaining }) catch return;
+                }
+            } else if (std.mem.startsWith(u8, loc_val, "/") and !std.mem.startsWith(u8, loc_val, "//")) {
+                if (std.mem.startsWith(u8, loc_val, prefix)) {
+                    out.print(allocator, "Location: {s}\r\n", .{ loc_val }) catch return;
+                } else {
+                    out.print(allocator, "Location: {s}{s}\r\n", .{ prefix, loc_val }) catch return;
+                }
+            } else {
+                out.appendSlice(allocator, rl) catch return;
+                out.appendSlice(allocator, "\r\n") catch return;
+            }
+            continue;
+        }
+        if (startsWithCI(rl, "set-cookie:")) {
+            var cookie_parts = std.mem.splitSequence(u8, rl, ";");
+            var first = true;
+            while (cookie_parts.next()) |part| {
+                const trimmed = std.mem.trim(u8, part, " \t");
+                if (startsWithCI(trimmed, "domain=")) {
+                    continue;
+                }
+                if (first) {
+                    out.appendSlice(allocator, part) catch return;
+                    first = false;
+                } else {
+                    out.print(allocator, "; {s}", .{trimmed}) catch return;
+                }
+            }
+            out.appendSlice(allocator, "\r\n") catch return;
+            continue;
+        }
         if (startsWithCI(rl, "access-control-allow-origin:")) {
-            out.appendSlice(allocator, "Access-Control-Allow-Origin: " ++ PROXY_ORIGIN ++ "\r\n") catch return;
+            out.print(allocator, "Access-Control-Allow-Origin: {s}\r\n", .{origin_val}) catch return;
             has_acao = true;
             continue;
         }
@@ -546,7 +809,7 @@ fn proxyToBackendPort(allocator: std.mem.Allocator, client_sock: usize, raw_requ
         out.appendSlice(allocator, rl) catch return;
         out.appendSlice(allocator, "\r\n") catch return;
     }
-    if (!has_acao) out.appendSlice(allocator, "Access-Control-Allow-Origin: " ++ PROXY_ORIGIN ++ "\r\n") catch return;
+    if (!has_acao) out.print(allocator, "Access-Control-Allow-Origin: {s}\r\n", .{origin_val}) catch return;
     if (!has_acac) out.appendSlice(allocator, "Access-Control-Allow-Credentials: true\r\n") catch return;
     out.appendSlice(allocator, "\r\n") catch return;
 
@@ -807,6 +1070,11 @@ fn handleConnection(ctx: ConnCtx) void {
                         std.mem.eql(u8, url_path, "/api/toggle-webview-dev-tools") or
                         std.mem.eql(u8, url_path, "/api/list-managed-downloads") or
                         std.mem.eql(u8, url_path, "/api/run-managed-download-action") or
+                        std.mem.eql(u8, url_path, "/api/install-system-wide-app") or
+                        std.mem.eql(u8, url_path, "/api/install-managed-windows-app") or
+                        std.mem.eql(u8, url_path, "/api/uninstall-managed-windows-app") or
+                        std.mem.eql(u8, url_path, "/api/launch-next-app") or
+                        std.mem.eql(u8, url_path, "/api/kill-next-app") or
                         std.mem.eql(u8, url_path, "/api/install-extension");
 
     if (referer_path != null and !is_real_api) {
@@ -1164,6 +1432,271 @@ fn handleConnection(ctx: ConnCtx) void {
         return;
     }
 
+    if (std.mem.eql(u8, url_path, "/api/launch-next-app")) {
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Invalid JSON\"}");
+            return;
+        };
+        defer parsed.deinit();
+
+        const app_path_val = parsed.value.object.get("path") orelse {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Missing path\"}");
+            return;
+        };
+
+        const norm_path = allocator.dupe(u8, app_path_val.string) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+            return;
+        };
+        defer allocator.free(norm_path);
+        std.mem.replaceScalar(u8, norm_path, '/', '\\');
+
+        const running_port = findRunningServer(norm_path);
+        if (running_port > 0) {
+            _ = incrementServerRef(norm_path);
+            const resp = std.fmt.allocPrint(allocator, "\"http://localhost:{d}\"", .{running_port}) catch "\"http://localhost:9735\"";
+            defer if (!std.mem.eql(u8, resp, "\"http://localhost:9735\"")) allocator.free(resp);
+            sendJson(ctx.sock, resp);
+            return;
+        }
+
+        const port = getFreePort();
+        g_next_app_port = port;
+
+        const pkg_path = std.fs.path.join(allocator, &.{ norm_path, "package.json" }) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+            return;
+        };
+        defer allocator.free(pkg_path);
+
+        const pkg_path_z = allocator.dupeZ(u8, pkg_path) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+            return;
+        };
+        defer allocator.free(pkg_path_z);
+
+        var is_vite = false;
+        if (fopen(pkg_path_z, "rb")) |pkg_f| {
+            _ = fclose(pkg_f);
+            is_vite = true;
+        }
+
+        var si = STARTUPINFOA{};
+        var pi = PROCESS_INFORMATION{};
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        var launched = false;
+        if (is_vite) {
+            const cmd_str = std.fmt.allocPrint(allocator, "cmd.exe /c npm run preview -- --port {d} --host 127.0.0.1", .{port}) catch {
+                sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+                return;
+            };
+            defer allocator.free(cmd_str);
+            const cmdline = allocator.dupeZ(u8, cmd_str) catch {
+                sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+                return;
+            };
+            defer allocator.free(cmdline);
+
+            const app_path_z = allocator.dupeZ(u8, norm_path) catch {
+                sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+                return;
+            };
+            defer allocator.free(app_path_z);
+
+            const ok = CreateProcessA(null, cmdline.ptr, null, null, 0, CREATE_NO_WINDOW, null, app_path_z.ptr, &si, &pi);
+            if (ok != 0) {
+                registerServer(allocator, norm_path, port, pi);
+                launched = true;
+            }
+        } else {
+            const kernel32 = struct {
+                extern "kernel32" fn SetEnvironmentVariableA(lpName: [*:0]const u8, lpValue: ?[*:0]const u8) callconv(.winapi) i32;
+            };
+            var port_buf: [16]u8 = undefined;
+            const port_str = std.fmt.bufPrint(&port_buf, "{d}", .{port}) catch "9735";
+            const port_str_z = allocator.dupeZ(u8, port_str) catch {
+                sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+                return;
+            };
+            defer allocator.free(port_str_z);
+            _ = kernel32.SetEnvironmentVariableA("PORT", port_str_z.ptr);
+
+            const script = "const http = require('http'), fs = require('fs'), path = require('path'); http.createServer((req, res) => { const rp = decodeURIComponent(req.url.split('?')[0]); const fp = path.join(process.cwd(), rp === '/' ? 'index.html' : rp); fs.readFile(fp, (err, data) => { if (err) { res.statusCode = 404; res.end('Not found'); } else { const ext = path.extname(fp).toLowerCase(); const mime = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml' }; res.setHeader('Content-Type', mime[ext] || 'application/octet-stream'); res.end(data); } }); }).listen(process.env.PORT || 9735, '0.0.0.0');";
+            const cmd_str = std.fmt.allocPrint(allocator, "node.exe -e \"{s}\"", .{script}) catch {
+                sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+                return;
+            };
+            defer allocator.free(cmd_str);
+            const cmdline = allocator.dupeZ(u8, cmd_str) catch {
+                sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+                return;
+            };
+            defer allocator.free(cmdline);
+            const app_path_z = allocator.dupeZ(u8, norm_path) catch {
+                sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+                return;
+            };
+            defer allocator.free(app_path_z);
+
+            const ok = CreateProcessA(null, cmdline.ptr, null, null, 0, CREATE_NO_WINDOW, null, app_path_z.ptr, &si, &pi);
+            if (ok != 0) {
+                registerServer(allocator, norm_path, port, pi);
+                launched = true;
+            }
+        }
+
+        if (launched) {
+            waitForPort(port);
+        }
+
+        const resp = std.fmt.allocPrint(allocator, "\"http://localhost:{d}\"", .{port}) catch "\"http://localhost:9735\"";
+        defer if (!std.mem.eql(u8, resp, "\"http://localhost:9735\"")) allocator.free(resp);
+
+        sendJson(ctx.sock, resp);
+        return;
+    }
+
+    if (std.mem.eql(u8, url_path, "/api/kill-next-app")) {
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
+            killNextAppProcess(allocator);
+            sendJson(ctx.sock, "{\"success\":true}");
+            return;
+        };
+        defer parsed.deinit();
+
+        const path_val = parsed.value.object.get("path");
+        if (path_val) |p| {
+            decrementServerRef(allocator, p.string);
+        } else {
+            killNextAppProcess(allocator);
+        }
+        sendJson(ctx.sock, "{\"success\":true}");
+        return;
+    }
+
+    if (std.mem.eql(u8, url_path, "/api/install-system-wide-app")) {
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Invalid JSON\"}");
+            return;
+        };
+        defer parsed.deinit();
+        const installer_path_val = parsed.value.object.get("installerPath") orelse {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Missing installerPath\"}");
+            return;
+        };
+        _ = runCmdProcess(allocator, installer_path_val.string, "/S");
+        sendJson(ctx.sock, "{\"success\":true,\"exePath\":\"\",\"installLocation\":\"\"}");
+        return;
+    }
+
+    if (std.mem.eql(u8, url_path, "/api/install-managed-windows-app")) {
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Invalid JSON\"}");
+            return;
+        };
+        defer parsed.deinit();
+        const installer_path_val = parsed.value.object.get("installerPath") orelse {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Missing installerPath\"}");
+            return;
+        };
+        const install_dir_val = parsed.value.object.get("installDir") orelse {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Missing installDir\"}");
+            return;
+        };
+
+        // Terminate any running nocodex.exe process first
+        _ = runCmdProcess(allocator, "taskkill.exe", "/f /im nocodex.exe");
+
+        // Convert slashes to backslashes for NSIS
+        const install_dir = allocator.dupe(u8, install_dir_val.string) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+            return;
+        };
+        defer allocator.free(install_dir);
+        std.mem.replaceScalar(u8, install_dir, '/', '\\');
+
+        const d_arg = std.fmt.allocPrint(allocator, "/D={s}", .{install_dir}) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+            return;
+        };
+        defer allocator.free(d_arg);
+
+        const ok = runCmdProcess(allocator, installer_path_val.string, d_arg);
+        if (!ok) {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Installer failed\"}");
+            return;
+        }
+
+        const install_dir_fwd = std.mem.replaceOwned(u8, allocator, install_dir, "\\", "/") catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+            return;
+        };
+        defer allocator.free(install_dir_fwd);
+
+        // Try reading the manifest file
+        const manifest_name = if (parsed.value.object.get("manifestName")) |m| m.string else "oneview-install.json";
+        const manifest_path = std.fs.path.join(allocator, &.{ install_dir, manifest_name }) catch {
+            const resp = std.fmt.allocPrint(allocator, "{{\"success\":true,\"installDir\":\"{s}\",\"manifest\":{{}}}}", .{install_dir_fwd}) catch "{\"success\":true}";
+            defer if (!std.mem.eql(u8, resp, "{\"success\":true}")) allocator.free(resp);
+            sendJson(ctx.sock, resp);
+            return;
+        };
+        defer allocator.free(manifest_path);
+
+        const manifest_path_z = allocator.dupeZ(u8, manifest_path) catch {
+            const resp = std.fmt.allocPrint(allocator, "{{\"success\":true,\"installDir\":\"{s}\",\"manifest\":{{}}}}", .{install_dir_fwd}) catch "{\"success\":true}";
+            defer if (!std.mem.eql(u8, resp, "{\"success\":true}")) allocator.free(resp);
+            sendJson(ctx.sock, resp);
+            return;
+        };
+        defer allocator.free(manifest_path_z);
+
+        if (fopen(manifest_path_z, "rb")) |manifest_f| {
+            defer _ = fclose(manifest_f);
+            _ = fseek(manifest_f, 0, 2);
+            const manifest_size: usize = @intCast(ftell(manifest_f));
+            _ = fseek(manifest_f, 0, 0);
+
+            const manifest_raw = allocator.alloc(u8, manifest_size) catch {
+                const resp = std.fmt.allocPrint(allocator, "{{\"success\":true,\"installDir\":\"{s}\",\"manifest\":{{}}}}", .{install_dir_fwd}) catch "{\"success\":true}";
+                defer if (!std.mem.eql(u8, resp, "{\"success\":true}")) allocator.free(resp);
+                sendJson(ctx.sock, resp);
+                return;
+            };
+            defer allocator.free(manifest_raw);
+            _ = fread(manifest_raw.ptr, 1, manifest_size, manifest_f);
+
+            const resp = std.fmt.allocPrint(allocator, "{{\"success\":true,\"installDir\":\"{s}\",\"manifest\":{s}}}", .{install_dir_fwd, manifest_raw}) catch {
+                sendJson(ctx.sock, "{\"success\":true}");
+                return;
+            };
+            defer allocator.free(resp);
+            sendJson(ctx.sock, resp);
+        } else {
+            const resp = std.fmt.allocPrint(allocator, "{{\"success\":true,\"installDir\":\"{s}\",\"manifest\":{{}}}}", .{install_dir_fwd}) catch "{\"success\":true}";
+            defer if (!std.mem.eql(u8, resp, "{\"success\":true}")) allocator.free(resp);
+            sendJson(ctx.sock, resp);
+        }
+        return;
+    }
+
+    if (std.mem.eql(u8, url_path, "/api/uninstall-managed-windows-app")) {
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Invalid JSON\"}");
+            return;
+        };
+        defer parsed.deinit();
+        const uninstall_path_val = parsed.value.object.get("uninstallPath") orelse {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"Missing uninstallPath\"}");
+            return;
+        };
+        _ = runCmdProcess(allocator, "taskkill.exe", "/f /im nocodex.exe");
+        _ = runCmdProcess(allocator, uninstall_path_val.string, "/S");
+        sendJson(ctx.sock, "{\"success\":true}");
+        return;
+    }
+
     if (std.mem.eql(u8, url_path, "/api/launch-exe")) {
         var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
             sendJson(ctx.sock, "{\"success\":false,\"message\":\"Invalid JSON\"}");
@@ -1174,46 +1707,122 @@ fn handleConnection(ctx: ConnCtx) void {
             sendJson(ctx.sock, "{\"success\":false,\"message\":\"Missing path\"}");
             return;
         };
-        const path_z = allocator.dupeZ(u8, path_val.string) catch { sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}"); return; };
+        const tech_val = parsed.value.object.get("tech");
+        const tech = if (tech_val) |v| v.string else "";
+
+        const norm_path = allocator.dupe(u8, path_val.string) catch {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+            return;
+        };
+        defer allocator.free(norm_path);
+        std.mem.replaceScalar(u8, norm_path, '/', '\\');
+
+        const resolved_path = resolveLaunchableExePath(allocator, norm_path) orelse norm_path;
+        defer if (!std.mem.eql(u8, resolved_path, norm_path)) allocator.free(resolved_path);
+
+        const path_z = allocator.dupeZ(u8, resolved_path) catch { sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}"); return; };
         defer allocator.free(path_z);
 
-        const shell32 = struct {
-            extern "shell32" fn ShellExecuteA(
-                hwnd: ?*anyopaque,
-                lpOperation: ?[*:0]const u8,
-                lpFile: [*:0]const u8,
-                lpParameters: ?[*:0]const u8,
-                lpDirectory: ?[*:0]const u8,
-                nShowCmd: c_int
-            ) callconv(.winapi) ?*anyopaque;
-        };
-        _ = shell32.ShellExecuteA(null, "open", path_z.ptr, null, null, 5);
-        sendJson(ctx.sock, "{\"success\":true}");
-        return;
+        if (std.mem.eql(u8, tech, "python-flask")) {
+            const running_port = findRunningServer(resolved_path);
+            if (running_port > 0) {
+                _ = incrementServerRef(resolved_path);
+                const resp = std.fmt.allocPrint(allocator, "{{\"success\":true,\"mode\":\"embedded\",\"url\":\"http://localhost:{d}\"}}", .{running_port}) catch "{\"success\":true}";
+                defer if (!std.mem.eql(u8, resp, "{\"success\":true}")) allocator.free(resp);
+                sendJson(ctx.sock, resp);
+                return;
+            }
+
+            const kernel32 = struct {
+                extern "kernel32" fn SetEnvironmentVariableA(lpName: [*:0]const u8, lpValue: ?[*:0]const u8) callconv(.winapi) i32;
+            };
+            _ = kernel32.SetEnvironmentVariableA("PYTHONIOENCODING", "utf-8:replace");
+            _ = kernel32.SetEnvironmentVariableA("PYTHONUTF8", "1");
+            _ = kernel32.SetEnvironmentVariableA("ONEVIEW_EMBEDDED", "1");
+            _ = kernel32.SetEnvironmentVariableA("ONEVIEW_LAUNCH_MODE", "embedded");
+            _ = kernel32.SetEnvironmentVariableA("LAUNCH_BROWSER", "false");
+
+            const port = getFreePort();
+            g_next_app_port = port;
+
+            const cmd_str = std.fmt.allocPrint(allocator, "\"{s}\" --port={d}", .{resolved_path, port}) catch {
+                sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+                return;
+            };
+            defer allocator.free(cmd_str);
+            const cmdline = allocator.dupeZ(u8, cmd_str) catch {
+                sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}");
+                return;
+            };
+            defer allocator.free(cmdline);
+
+            const exe_dir = std.fs.path.dirname(resolved_path) orelse "";
+            const exe_dir_z = if (exe_dir.len > 0) (allocator.dupeZ(u8, exe_dir) catch null) else null;
+            defer if (exe_dir_z) |edz| allocator.free(edz);
+
+            var si = STARTUPINFOA{};
+            var pi = PROCESS_INFORMATION{};
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+            const ok = CreateProcessA(null, cmdline.ptr, null, null, 0, CREATE_NO_WINDOW, null, if (exe_dir_z) |edz| edz.ptr else null, &si, &pi);
+            if (ok != 0) {
+                registerServer(allocator, resolved_path, port, pi);
+                waitForPort(port);
+            }
+
+            const resp = std.fmt.allocPrint(allocator, "{{\"success\":true,\"mode\":\"embedded\",\"url\":\"http://localhost:{d}\"}}", .{port}) catch "{\"success\":true}";
+            defer if (!std.mem.eql(u8, resp, "{\"success\":true}")) allocator.free(resp);
+            sendJson(ctx.sock, resp);
+            return;
+        } else {
+            const shell32 = struct {
+                extern "shell32" fn ShellExecuteA(
+                    hwnd: ?*anyopaque,
+                    lpOperation: ?[*:0]const u8,
+                    lpFile: [*:0]const u8,
+                    lpParameters: ?[*:0]const u8,
+                    lpDirectory: ?[*:0]const u8,
+                    nShowCmd: c_int
+                ) callconv(.winapi) ?*anyopaque;
+            };
+            const exe_dir = std.fs.path.dirname(resolved_path) orelse "";
+            const exe_dir_z = if (exe_dir.len > 0) (allocator.dupeZ(u8, exe_dir) catch null) else null;
+            defer if (exe_dir_z) |edz| allocator.free(edz);
+
+            _ = shell32.ShellExecuteA(null, "open", path_z.ptr, null, if (exe_dir_z) |edz| edz.ptr else null, 5);
+            sendJson(ctx.sock, "{\"success\":true}");
+            return;
+        }
     }
 
     if (std.mem.eql(u8, url_path, "/api/attach-detached-view-window")) {
-        var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
-            sendJson(ctx.sock, "{\"success\":false}");
-            return;
-        };
-        defer parsed.deinit();
-        const url_val = parsed.value.object.get("url") orelse {
-            sendJson(ctx.sock, "{\"success\":false}");
-            return;
-        };
-
         const eval_js = std.fmt.allocPrint(allocator,
-            "document.dispatchEvent(new CustomEvent('zero:detached-tab-attach-request', {{ detail: {{ url: '{s}' }} }}));",
-            .{ url_val.string }
+            "if (window._wcEmitDetachedTabAttachRequest) window._wcEmitDetachedTabAttachRequest({s});",
+            .{ body }
         ) catch return;
         defer allocator.free(eval_js);
         const eval_js_z = allocator.dupeZ(u8, eval_js) catch return;
         defer allocator.free(eval_js_z);
 
         if (g_app_ptr) |app| {
+            const user32_op = struct {
+                extern "user32" fn ShowWindow(hWnd: ?*anyopaque, nCmdShow: c_int) callconv(.winapi) i32;
+                extern "user32" fn SetForegroundWindow(hWnd: ?*anyopaque) callconv(.winapi) i32;
+                extern "user32" fn IsIconic(hWnd: ?*anyopaque) callconv(.winapi) i32;
+            };
+            if (app.main_window_hwnd) |hwnd| {
+                if (user32_op.IsIconic(hwnd) != 0) {
+                    _ = user32_op.ShowWindow(hwnd, 9); // SW_RESTORE = 9
+                } else {
+                    _ = user32_op.ShowWindow(hwnd, 5); // SW_SHOW = 5
+                }
+                _ = user32_op.SetForegroundWindow(hwnd);
+            }
             if (app.main_webview) |main_wv| {
-                main_wv.eval(eval_js_z) catch {};
+                logMsg("[Zig] HTTP attach-detached-view-window: evaluating JS: {s}", .{eval_js_z});
+                main_wv.eval(eval_js_z) catch |err| {
+                    logMsg("[Zig] HTTP attach-detached-view-window: eval error: {}", .{err});
+                };
             }
         }
         sendJson(ctx.sock, "{\"success\":true}");
@@ -1221,6 +1830,11 @@ fn handleConnection(ctx: ConnCtx) void {
     }
 
 
+    if (std.mem.eql(u8, url_path, "/api/debug-log")) {
+        logMsg("[JS Debug] {s}", .{url_path_raw});
+        sendJson(ctx.sock, "{\"success\":true}");
+        return;
+    }
     if (std.mem.eql(u8, url_path, "/api/list-extensions")) {
         const appdata = getEnvVar(allocator, "APPDATA");
         defer if (appdata.len > 0) allocator.free(appdata);
@@ -2010,7 +2624,7 @@ fn handleConnection(ctx: ConnCtx) void {
                 _ = AppendMenuA(hmenu, if (c.disable_clear_right) MF_GRAYED else MF_STRING, 2, "Clear Tabs to the Right");
                 _ = AppendMenuA(hmenu, MF_SEPARATOR, 0, null);
                 _ = AppendMenuA(hmenu, if (c.disable_clear_cache) MF_GRAYED else MF_STRING, 3, "Clear Page Cache");
-                _ = AppendMenuA(hmenu, if (c.disable_clear_user_data) MF_GRAYED else MF_STRING, 4, "Clear Site Cookies & Storage");
+                _ = AppendMenuA(hmenu, if (c.disable_clear_user_data) MF_GRAYED else MF_STRING, 4, "Clear & Restart Fresh (Site)");
                 _ = AppendMenuA(hmenu, MF_SEPARATOR, 0, null);
                 _ = AppendMenuA(hmenu, if (c.disable_inspect) MF_GRAYED else MF_STRING, 5, "Inspect Page (DevTools)");
                 _ = AppendMenuA(hmenu, MF_SEPARATOR, 0, null);
@@ -2172,7 +2786,7 @@ fn handleConnection(ctx: ConnCtx) void {
             };
             cctx.app = app;
             cctx.origin = allocator.dupe(u8, origin) catch "";
-            cctx.types = allocator.dupe(u8, "cookies,local_storage,indexeddb,websql,file_systems") catch "";
+            cctx.types = allocator.dupe(u8, "cookies,file_systems,indexed_db,local_storage,web_sql,cache_storage,shader_cache") catch "";
             cctx.allocator = allocator;
 
             const S = struct {
@@ -2556,7 +3170,9 @@ fn nativeWebcontentCall(req: EasyApp.Request) anyerror!void {
         return;
     } else if (std.mem.eql(u8, method, "attach-detached-view-window")) {
         const url = if (payload.get("url")) |u| u.string else "";
-        logMsg("IPC: method=attach-detached-view-window, url={s}", .{url});
+        const title = if (payload.get("title")) |t| t.string else "Attached Tab";
+        const partition = if (payload.get("partition")) |p| p.string else "persist:oneview-dev-guest";
+        logMsg("IPC: method=attach-detached-view-window, url={s}, title={s}, partition={s}", .{ url, title, partition });
         
         var wsdata: WSADATA = undefined;
         if (WSAStartup(0x0202, &wsdata) == 0) {
@@ -2571,9 +3187,22 @@ fn nativeWebcontentCall(req: EasyApp.Request) anyerror!void {
                     .sin_zero = [_]u8{0} ** 8,
                 };
                 if (connect(sock, &addr, @sizeOf(SOCKADDR_IN)) != SOCKET_ERROR) {
+                    const esc_url = escapeJsonStr(app.allocator, url);
+                    defer if (esc_url.ptr != url.ptr) app.allocator.free(esc_url);
+                    const esc_title = escapeJsonStr(app.allocator, title);
+                    defer if (esc_title.ptr != title.ptr) app.allocator.free(esc_title);
+                    const esc_partition = escapeJsonStr(app.allocator, partition);
+                    defer if (esc_partition.ptr != partition.ptr) app.allocator.free(esc_partition);
+
+                    const post_body = std.fmt.allocPrint(app.allocator,
+                        "{{\"url\":\"{s}\",\"title\":\"{s}\",\"partition\":\"{s}\"}}",
+                        .{ esc_url, esc_title, esc_partition }
+                    ) catch return;
+                    defer app.allocator.free(post_body);
+
                     const req_str = std.fmt.allocPrint(app.allocator,
-                        "POST /api/attach-detached-view-window HTTP/1.1\r\nHost: 127.0.0.1:9731\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n{{\"url\":\"{s}\"}}",
-                        .{ url.len + 9, url }
+                        "POST /api/attach-detached-view-window HTTP/1.1\r\nHost: 127.0.0.1:9731\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n{s}",
+                        .{ post_body.len, post_body }
                     ) catch return;
                     defer app.allocator.free(req_str);
                     _ = send(sock, req_str.ptr, @intCast(req_str.len), 0);
@@ -2583,11 +3212,126 @@ fn nativeWebcontentCall(req: EasyApp.Request) anyerror!void {
         }
 
         req.resolveWith("{\"success\":true}");
-        
-        const user32 = struct {
-            extern "user32" fn PostQuitMessage(nExitCode: c_int) callconv(.winapi) void;
-        };
-        user32.PostQuitMessage(0);
+        return;
+    } else if (std.mem.eql(u8, method, "show-native-tab-context-menu")) {
+        const anchor_id = if (payload.get("anchorId")) |v| v.string else "";
+        const x = if (payload.get("x")) |v| (if (v == .integer) v.integer else 0) else 0;
+        const y = if (payload.get("y")) |v| (if (v == .integer) v.integer else 0) else 0;
+
+        var disable_clear_left = false;
+        var disable_clear_right = false;
+        var disable_clear_cache = false;
+        var disable_clear_user_data = false;
+        var disable_inspect = false;
+
+        if (payload.get("disabled")) |d| {
+            if (d == .object) {
+                disable_clear_left = if (d.object.get("clearLeft")) |v| v.bool else false;
+                disable_clear_right = if (d.object.get("clearRight")) |v| v.bool else false;
+                disable_clear_cache = if (d.object.get("clearCache")) |v| v.bool else false;
+                disable_clear_user_data = if (d.object.get("clearUserData")) |v| v.bool else false;
+                disable_inspect = if (d.object.get("inspectLocalFile")) |v| v.bool else false;
+            }
+        }
+
+        const hmenu = CreatePopupMenu() orelse return;
+        defer _ = DestroyMenu(hmenu);
+
+        _ = AppendMenuA(hmenu, if (disable_clear_left) MF_GRAYED else MF_STRING, 1, "Clear Tabs to the Left");
+        _ = AppendMenuA(hmenu, if (disable_clear_right) MF_GRAYED else MF_STRING, 2, "Clear Tabs to the Right");
+        _ = AppendMenuA(hmenu, MF_SEPARATOR, 0, null);
+        _ = AppendMenuA(hmenu, if (disable_clear_cache) MF_GRAYED else MF_STRING, 3, "Clear Page Cache");
+        _ = AppendMenuA(hmenu, if (disable_clear_user_data) MF_GRAYED else MF_STRING, 4, "Clear & Restart Fresh (Site)");
+        _ = AppendMenuA(hmenu, MF_SEPARATOR, 0, null);
+        _ = AppendMenuA(hmenu, if (disable_inspect) MF_GRAYED else MF_STRING, 5, "Inspect Page (DevTools)");
+        _ = AppendMenuA(hmenu, MF_SEPARATOR, 0, null);
+        _ = AppendMenuA(hmenu, MF_STRING, 6, "Duplicate Tab");
+
+        var pt = POINT{ .x = @intCast(x), .y = @intCast(y) };
+        _ = ClientToScreen(app.main_window_hwnd, &pt);
+
+        const TPM_RETURNCMD = 0x0100;
+        const TPM_NONOTIFY = 0x0080;
+        const cmd = TrackPopupMenu(hmenu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, pt.x, pt.y, 0, app.main_window_hwnd, null);
+
+        var action: ?[]const u8 = null;
+        if (cmd == 1) {
+            action = "clear-left";
+        } else if (cmd == 2) {
+            action = "clear-right";
+        } else if (cmd == 3) {
+            action = "clear-cache";
+        } else if (cmd == 4) {
+            action = "clear-user-data";
+        } else if (cmd == 5) {
+            action = "inspect-local-file";
+        } else if (cmd == 6) {
+            action = "duplicate-tab";
+        }
+
+        if (action) |act| {
+            if (app.main_webview) |main_wv| {
+                const js = std.fmt.allocPrint(app.allocator, "if (window._wcEmitTabContextAction) window._wcEmitTabContextAction('{s}', '{s}');", .{ act, anchor_id }) catch "";
+                defer if (js.len > 0) app.allocator.free(js);
+                if (js.len > 0) {
+                    if (app.allocator.dupeZ(u8, js) catch null) |js_z| {
+                        defer app.allocator.free(js_z);
+                        main_wv.eval(js_z) catch {};
+                    }
+                }
+            }
+        }
+
+        req.resolveWith("{\"success\":true}");
+        return;
+    } else if (std.mem.eql(u8, method, "toggle-webview-dev-tools")) {
+        const web_contents_id = if (payload.get("webContentsId")) |v| v.string else "";
+        const key_z = app.allocator.dupeZ(u8, web_contents_id) catch "";
+        defer if (key_z.len > 0) app.allocator.free(key_z);
+
+        if (key_z.len > 0) {
+            if (app.child_views.getPtr(key_z)) |view_ptr| {
+                if (view_ptr.cpp_handle) |h| {
+                    child_webview_open_devtools(h);
+                }
+            }
+        }
+        req.resolveWith("{\"success\":true}");
+        return;
+    } else if (std.mem.eql(u8, method, "clear-webview-page-cache") or std.mem.eql(u8, method, "clear-webview-user-data")) {
+        const url = if (payload.get("url")) |v| v.string else "";
+        if (url.len > 0) {
+            var origin = url;
+            if (std.mem.indexOf(u8, url, "://")) |scheme_idx| {
+                const rest = url[scheme_idx + 3 ..];
+                if (std.mem.indexOfScalar(u8, rest, '/')) |slash_idx| {
+                    origin = url[0 .. scheme_idx + 3 + slash_idx];
+                }
+            }
+
+            var opt_handle: ?*anyopaque = null;
+            var it = app.child_views.iterator();
+            while (it.next()) |entry| {
+                if (entry.value_ptr.cpp_handle) |h| {
+                    opt_handle = h;
+                    break;
+                }
+            }
+
+            if (opt_handle) |h| {
+                const origin_z = app.allocator.dupeZ(u8, origin) catch "";
+                defer if (origin_z.len > 0) app.allocator.free(origin_z);
+                
+                const types_str = if (std.mem.eql(u8, method, "clear-webview-page-cache")) "cache_storage,shader_cache" else "cookies,file_systems,indexed_db,local_storage,web_sql,cache_storage,shader_cache";
+                const types_z = app.allocator.dupeZ(u8, types_str) catch "";
+                defer if (types_z.len > 0) app.allocator.free(types_z);
+                
+                if (origin_z.len > 0 and types_z.len > 0) {
+                    child_webview_clear_data(h, origin_z, types_z);
+                }
+            }
+        }
+        req.resolveWith("{\"success\":true}");
         return;
     }
 
@@ -2630,7 +3374,7 @@ fn nativeWebcontentCall(req: EasyApp.Request) anyerror!void {
             }
         }
 
-        const disable_gpu = g_is_detached or (if (payload.get("disableGpu")) |dg| dg.bool else false);
+        const disable_gpu = (g_is_detached and g_is_sitesnap_studio) or (if (payload.get("disableGpu")) |dg| dg.bool else false);
 
         const CreateCtx = struct {
             app: *App,
@@ -3231,6 +3975,12 @@ const INIT_SCRIPT =
     \\  const P2 = 'http://127.0.0.1:9731/proxy5000';
     \\  function rewrite(url) {
     \\    if (typeof url !== 'string') return url;
+    \\    try {
+    \\      const target = new URL(url, window.location.href);
+    \\      if (target.origin.toLowerCase() === window.location.origin.toLowerCase()) {
+    \\        return url;
+    \\      }
+    \\    } catch (e) {}
     \\    if (url.startsWith(B1)) return P1 + url.slice(B1.length);
     \\    if (url.startsWith(B2)) return P2 + url.slice(B2.length);
 
@@ -3242,16 +3992,32 @@ const INIT_SCRIPT =
     \\  // Patch fetch
     \\  const _fetch = window.fetch.bind(window);
     \\  window.fetch = function(url, opts) {
-    \\    if (url instanceof Request)
-    \\      url = new Request(rewrite(url.url), url);
-    \\    else
-    \\      url = rewrite(url);
-    \\    return _fetch(url, opts);
+    \\    let finalUrl = url;
+    \\    let finalOpts = opts || {};
+    \\    if (url instanceof Request) {
+    \\      const rew = rewrite(url.url);
+    \\      if (rew !== url.url) {
+    \\        finalOpts = Object.assign({}, opts, { credentials: 'include' });
+    \\      }
+    \\      finalUrl = new Request(rew, url);
+    \\    } else {
+    \\      const rew = rewrite(url);
+    \\      if (rew !== url) {
+    \\        finalOpts = Object.assign({}, opts, { credentials: 'include' });
+    \\      }
+    \\      finalUrl = rew;
+    \\    }
+    \\    return _fetch(finalUrl, finalOpts);
     \\  };
     \\  // Patch XMLHttpRequest
     \\  const _open = XMLHttpRequest.prototype.open;
     \\  XMLHttpRequest.prototype.open = function(m, url, ...a) {
-    \\    return _open.call(this, m, rewrite(url), ...a);
+    \\    const rew = rewrite(url);
+    \\    const res = _open.call(this, m, rew, ...a);
+    \\    if (rew !== url) {
+    \\      this.withCredentials = true;
+    \\    }
+    \\    return res;
     \\  };
     \\
     \\  // ── window.api shim: forwards calls to native WebView binding ────────────
@@ -3341,7 +4107,9 @@ const INIT_SCRIPT =
     \\  window.api.listOneviewSharedStorage = window.api.listOneviewSharedStorage || async function() { return []; };
     \\  window.api.clearOneviewSharedStorage = window.api.clearOneviewSharedStorage || async function() {};
     \\  window.api.clearOneviewEmbeddedTracking = window.api.clearOneviewEmbeddedTracking || async function() {};
+    \\  let currentAppPath = "";
     \\  window.api.launchExe = window.api.launchExe || async function(path, tech) {
+    \\    currentAppPath = path;
     \\    try {
     \\      const r = await fetch('http://127.0.0.1:9731/api/launch-exe', {
     \\        method: 'POST',
@@ -3351,6 +4119,31 @@ const INIT_SCRIPT =
     \\      return await r.json();
     \\    } catch(e) {
     \\      return { success: false, message: e.message };
+    \\    }
+    \\  };
+    \\  window.api.launchNextApp = window.api.launchNextApp || async function(path, appType) {
+    \\    currentAppPath = path;
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/launch-next-app', {
+    \\        method: 'POST',
+    \\        headers: { 'Content-Type': 'application/json' },
+    \\        body: JSON.stringify({ path, appType })
+    \\      });
+    \\      return await r.json();
+    \\    } catch(e) {
+    \\      return '';
+    \\    }
+    \\  };
+    \\  window.api.killNextApp = window.api.killNextApp || async function() {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/kill-next-app', {
+    \\        method: 'POST',
+    \\        headers: { 'Content-Type': 'application/json' },
+    \\        body: JSON.stringify({ path: currentAppPath })
+    \\      });
+    \\      return await r.json();
+    \\    } catch(e) {
+    \\      return { success: false };
     \\    }
     \\  };
     \\  window.api.githubCheckForUpdates = window.api.githubCheckForUpdates || async function() { return null; };
@@ -3403,15 +4196,31 @@ const INIT_SCRIPT =
     \\      }
     \\    });
     \\  };
+    \\  let _detachedTabAttachCallback = null;
     \\  window.api.onDetachedTabAttachRequest = window.api.onDetachedTabAttachRequest || function(cb) {
-    \\    document.addEventListener('zero:detached-tab-attach-request', (e) => {
-    \\      if (e.detail) cb(e.detail);
-    \\    });
+    \\    _detachedTabAttachCallback = cb;
     \\  };
+    \\  window._wcEmitDetachedTabAttachRequest = function(payload) {
+    \\    fetch('http://127.0.0.1:9731/api/debug-log?msg=' + encodeURIComponent('JS: Received tab attach request: ' + JSON.stringify(payload)));
+    \\    if (_detachedTabAttachCallback) {
+    \\      try {
+    \\        _detachedTabAttachCallback(payload);
+    \\        fetch('http://127.0.0.1:9731/api/debug-log?msg=' + encodeURIComponent('JS: Callback executed successfully'));
+    \\      } catch(e) {
+    \\        fetch('http://127.0.0.1:9731/api/debug-log?msg=' + encodeURIComponent('JS Error in callback: ' + e.message));
+    \\      }
+    \\    } else {
+    \\      fetch('http://127.0.0.1:9731/api/debug-log?msg=' + encodeURIComponent('JS Callback is null!'));
+    \\    }
+    \\  };
+    \\  let _detachedOpenCallback = null;
     \\  window.api.onDetachedOpenRequest = window.api.onDetachedOpenRequest || function(cb) {
-    \\    document.addEventListener('zero:detached-open-request', (e) => {
-    \\      if (e.detail) cb(e.detail);
-    \\    });
+    \\    _detachedOpenCallback = cb;
+    \\  };
+    \\  window._wcEmitDetachedOpenRequest = function(payload) {
+    \\    if (_detachedOpenCallback) {
+    \\      try { _detachedOpenCallback(payload); } catch(e) {}
+    \\    }
     \\  };
     \\  window.api.runManagedDownloadAction = async function(payload) {
     \\    try {
@@ -3477,9 +4286,36 @@ const INIT_SCRIPT =
     \\      return j;
     \\    } catch(e) { return { success: false, message: e.message }; }
     \\  };
-    \\  window.api.installSystemWideApp = window.api.installSystemWideApp || async function() { return { success: false, message: 'Not supported in native port' }; };
-    \\  window.api.installManagedWindowsApp = window.api.installManagedWindowsApp || async function() { return { success: false, message: 'Not supported in native port' }; };
-    \\  window.api.uninstallManagedWindowsApp = window.api.uninstallManagedWindowsApp || async function() { return { success: false }; };
+    \\  window.api.installSystemWideApp = window.api.installSystemWideApp || async function(payload) {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/install-system-wide-app', {
+    \\        method: 'POST',
+    \\        headers: { 'Content-Type': 'application/json' },
+    \\        body: JSON.stringify(payload),
+    \\      });
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false, message: e.message }; }
+    \\  };
+    \\  window.api.installManagedWindowsApp = window.api.installManagedWindowsApp || async function(payload) {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/install-managed-windows-app', {
+    \\        method: 'POST',
+    \\        headers: { 'Content-Type': 'application/json' },
+    \\        body: JSON.stringify(payload),
+    \\      });
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false, message: e.message }; }
+    \\  };
+    \\  window.api.uninstallManagedWindowsApp = window.api.uninstallManagedWindowsApp || async function(payload) {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/uninstall-managed-windows-app', {
+    \\        method: 'POST',
+    \\        headers: { 'Content-Type': 'application/json' },
+    \\        body: JSON.stringify(payload),
+    \\      });
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false, message: e.message }; }
+    \\  };
     \\  window.api.openDetachedViewWindow = window.api.openDetachedViewWindow || async function(payload) {
     \\    const q = new URLSearchParams();
     \\    q.set('url', payload.url || '');
@@ -3671,6 +4507,9 @@ const INIT_SCRIPT =
     \\  };
     \\  window.api.showNativeTabContextMenu = window.api.showNativeTabContextMenu || async function(opts) {
     \\    try {
+    \\      if (window.api.webContentCall) {
+    \\        return await window.api.webContentCall('show-native-tab-context-menu', opts);
+    \\      }
     \\      const r = await fetch('http://127.0.0.1:9731/api/show-native-tab-context-menu', {
     \\        method: 'POST',
     \\        headers: { 'Content-Type': 'application/json' },
@@ -3690,6 +4529,9 @@ const INIT_SCRIPT =
     \\  };
     \\  window.api.clearWebviewPageCache = window.api.clearWebviewPageCache || async function(partition, url) {
     \\    try {
+    \\      if (window.api.webContentCall) {
+    \\        return await window.api.webContentCall('clear-webview-page-cache', { partition, url });
+    \\      }
     \\      const r = await fetch('http://127.0.0.1:9731/api/clear-webview-page-cache', {
     \\        method: 'POST',
     \\        headers: { 'Content-Type': 'application/json' },
@@ -3700,6 +4542,9 @@ const INIT_SCRIPT =
     \\  };
     \\  window.api.clearWebviewUserData = window.api.clearWebviewUserData || async function(partition, url) {
     \\    try {
+    \\      if (window.api.webContentCall) {
+    \\        return await window.api.webContentCall('clear-webview-user-data', { partition, url });
+    \\      }
     \\      const r = await fetch('http://127.0.0.1:9731/api/clear-webview-user-data', {
     \\        method: 'POST',
     \\        headers: { 'Content-Type': 'application/json' },
@@ -3710,6 +4555,9 @@ const INIT_SCRIPT =
     \\  };
     \\  window.api.toggleWebviewDevTools = window.api.toggleWebviewDevTools || async function(webContentsId) {
     \\    try {
+    \\      if (window.api.webContentCall) {
+    \\        return await window.api.webContentCall('toggle-webview-dev-tools', { webContentsId });
+    \\      }
     \\      const r = await fetch('http://127.0.0.1:9731/api/toggle-webview-dev-tools', {
     \\        method: 'POST',
     \\        headers: { 'Content-Type': 'application/json' },
@@ -3774,6 +4622,177 @@ const INIT_SCRIPT =
 
 var g_app_ptr: ?*App = null;
 var g_is_detached: bool = false;
+var g_is_sitesnap_studio: bool = false;
+const RunningServer = struct {
+    path: []const u8,
+    port: u16,
+    ref_count: i32,
+    pi: PROCESS_INFORMATION,
+};
+
+var g_running_servers: [16]?RunningServer = [_]?RunningServer{null} ** 16;
+var g_next_app_port: u16 = 0;
+
+fn findRunningServer(path: []const u8) u16 {
+    for (g_running_servers) |maybe_server| {
+        if (maybe_server) |server| {
+            if (std.mem.eql(u8, server.path, path)) {
+                return server.port;
+            }
+        }
+    }
+    return 0;
+}
+
+fn incrementServerRef(path: []const u8) bool {
+    for (&g_running_servers) |*maybe_server| {
+        if (maybe_server.*) |*server| {
+            if (std.mem.eql(u8, server.path, path)) {
+                server.ref_count += 1;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+fn registerServer(allocator: std.mem.Allocator, path: []const u8, port: u16, pi: PROCESS_INFORMATION) void {
+    for (&g_running_servers) |*maybe_server| {
+        if (maybe_server.* == null) {
+            maybe_server.* = RunningServer{
+                .path = allocator.dupe(u8, path) catch "",
+                .port = port,
+                .ref_count = 1,
+                .pi = pi,
+            };
+            return;
+        }
+    }
+}
+
+fn decrementServerRef(allocator: std.mem.Allocator, path: []const u8) void {
+    for (&g_running_servers) |*maybe_server| {
+        if (maybe_server.*) |*server| {
+            if (std.mem.eql(u8, server.path, path)) {
+                server.ref_count -= 1;
+                if (server.ref_count <= 0) {
+                    const kill_args = std.fmt.allocPrint(allocator, "/f /t /pid {d}", .{server.pi.dwProcessId}) catch "";
+                    defer if (kill_args.len > 0) allocator.free(kill_args);
+                    if (kill_args.len > 0) {
+                        _ = runCmdProcess(allocator, "taskkill.exe", kill_args);
+                    }
+                    _ = CloseHandle(server.pi.hProcess);
+                    _ = CloseHandle(server.pi.hThread);
+                    allocator.free(server.path);
+                    maybe_server.* = null;
+                }
+                return;
+            }
+        }
+    }
+}
+
+fn killNextAppProcess(allocator: std.mem.Allocator) void {
+    for (&g_running_servers) |*maybe_server| {
+        if (maybe_server.*) |*server| {
+            const kill_args = std.fmt.allocPrint(allocator, "/f /t /pid {d}", .{server.pi.dwProcessId}) catch "";
+            defer if (kill_args.len > 0) allocator.free(kill_args);
+            if (kill_args.len > 0) {
+                _ = runCmdProcess(allocator, "taskkill.exe", kill_args);
+            }
+            _ = CloseHandle(server.pi.hProcess);
+            _ = CloseHandle(server.pi.hThread);
+            allocator.free(server.path);
+            maybe_server.* = null;
+        }
+    }
+}
+
+fn getFreePort() u16 {
+    const ws2_32 = struct {
+        extern "ws2_32" fn socket(af: c_int, @"type": c_int, protocol: c_int) callconv(.winapi) usize;
+        extern "ws2_32" fn bind(s: usize, name: *const anyopaque, namelen: c_int) callconv(.winapi) c_int;
+        extern "ws2_32" fn getsockname(s: usize, name: *anyopaque, namelen: *c_int) callconv(.winapi) c_int;
+        extern "ws2_32" fn closesocket(s: usize) callconv(.winapi) c_int;
+    };
+
+    const s = ws2_32.socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == INVALID_SOCKET) return 9735;
+
+    const sockaddr_in = extern struct {
+        sin_family: i16,
+        sin_port: u16,
+        sin_addr: u32,
+        sin_zero: [8]u8,
+    };
+
+    const addr = sockaddr_in{
+        .sin_family = AF_INET,
+        .sin_port = 0,
+        .sin_addr = 0,
+        .sin_zero = [_]u8{0} ** 8,
+    };
+
+    if (ws2_32.bind(s, @ptrCast(&addr), @sizeOf(sockaddr_in)) != 0) {
+        _ = ws2_32.closesocket(s);
+        return 9735;
+    }
+
+    var bound_addr = sockaddr_in{
+        .sin_family = 0,
+        .sin_port = 0,
+        .sin_addr = 0,
+        .sin_zero = [_]u8{0} ** 8,
+    };
+    var addr_len: c_int = @sizeOf(sockaddr_in);
+    if (ws2_32.getsockname(s, @ptrCast(&bound_addr), &addr_len) != 0) {
+        _ = ws2_32.closesocket(s);
+        return 9735;
+    }
+
+    _ = ws2_32.closesocket(s);
+
+    const port = ((bound_addr.sin_port & 0xFF) << 8) | ((bound_addr.sin_port & 0xFF00) >> 8);
+    return port;
+}
+
+fn waitForPort(port: u16) void {
+    const ws2_32 = struct {
+        extern "ws2_32" fn socket(af: c_int, @"type": c_int, protocol: c_int) callconv(.winapi) usize;
+        extern "ws2_32" fn connect(s: usize, name: *const anyopaque, namelen: c_int) callconv(.winapi) c_int;
+        extern "ws2_32" fn closesocket(s: usize) callconv(.winapi) c_int;
+        extern "ws2_32" fn inet_addr(cp: [*:0]const u8) callconv(.winapi) u32;
+    };
+
+    const sockaddr_in = extern struct {
+        sin_family: i16,
+        sin_port: u16,
+        sin_addr: u32,
+        sin_zero: [8]u8,
+    };
+
+    var retries: usize = 0;
+    while (retries < 30) : (retries += 1) {
+        const s = ws2_32.socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (s != INVALID_SOCKET) {
+            const net_port = ((port & 0xFF) << 8) | ((port & 0xFF00) >> 8);
+            const addr = sockaddr_in{
+                .sin_family = AF_INET,
+                .sin_port = @intCast(net_port),
+                .sin_addr = ws2_32.inet_addr("127.0.0.1"),
+                .sin_zero = [_]u8{0} ** 8,
+            };
+
+            if (ws2_32.connect(s, @ptrCast(&addr), @sizeOf(sockaddr_in)) == 0) {
+                _ = ws2_32.closesocket(s);
+                return;
+            }
+            _ = ws2_32.closesocket(s);
+        }
+        Sleep(100);
+    }
+}
+
 
 fn saveCredentialHelper(allocator: std.mem.Allocator, cred_val: std.json.Value, profileId: []const u8) !void {
     const appdata = getEnvVar(allocator, "APPDATA");
@@ -4017,6 +5036,20 @@ fn urlEncode(allocator: std.mem.Allocator, input: []const u8) []const u8 {
         }
     }
     return result.toOwnedSlice(allocator) catch allocator.dupe(u8, input) catch input;
+}
+
+fn escapeJsonStr(allocator: std.mem.Allocator, input: []const u8) []const u8 {
+    var out = std.ArrayList(u8).empty;
+    for (input) |c| {
+        if (c == '\\') {
+            out.appendSlice(allocator, "\\\\") catch {};
+        } else if (c == '"') {
+            out.appendSlice(allocator, "\\\"") catch {};
+        } else {
+            out.append(allocator, c) catch {};
+        }
+    }
+    return out.toOwnedSlice(allocator) catch allocator.dupe(u8, input) catch input;
 }
 
 fn onChildWebviewMessage(key_ptr: [*:0]const u8, message_ptr: [*:0]const u8) callconv(.c) void {
@@ -4608,6 +5641,12 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
+    // 1.1 Startup process cleanup to free ports
+    {
+        _ = runCmdProcess(allocator, "taskkill.exe", "/f /im node.exe");
+        _ = runCmdProcess(allocator, "taskkill.exe", "/f /im BannerAnimate.exe");
+    }
+
     // 2. Parse args for detached mode and handle Single Instance Mutex
     var is_detached = false;
     var detached_url: []const u8 = "";
@@ -4629,6 +5668,9 @@ pub fn main(init: std.process.Init) !void {
             }
         }
     }
+
+    g_is_detached = is_detached;
+    g_is_sitesnap_studio = std.mem.indexOf(u8, detached_title, "SiteSnap Studio") != null;
 
     logMsg("Startup args parsed: is_detached={}, url='{s}', title='{s}'", .{ is_detached, detached_url, detached_title });
 
@@ -4683,11 +5725,13 @@ pub fn main(init: std.process.Init) !void {
     if (is_detached) {
         const user32_env = struct {
             extern "kernel32" fn SetEnvironmentVariableA(lpName: [*:0]const u8, lpValue: ?[*:0]const u8) callconv(.winapi) i32;
+            extern "kernel32" fn GetCurrentProcessId() callconv(.winapi) u32;
         };
         const appdata = getEnvVar(allocator, "APPDATA");
         defer if (appdata.len > 0) allocator.free(appdata);
         if (appdata.len > 0) {
-            const udf_path = std.fmt.allocPrint(allocator, "{s}\\OneView Dev\\Secret\\detached-udf", .{appdata}) catch "";
+            const pid = user32_env.GetCurrentProcessId();
+            const udf_path = std.fmt.allocPrint(allocator, "{s}\\OneView Dev\\Secret\\detached-udf-{d}", .{appdata, pid}) catch "";
             defer if (udf_path.len > 0) allocator.free(udf_path);
             if (udf_path.len > 0) {
                 const udf_path_z = allocator.dupeZ(u8, udf_path) catch null;
@@ -4704,6 +5748,9 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.indexOf(u8, detached_title, "SiteSnap Studio") != null) {
             _ = user32_env.SetEnvironmentVariableA("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--disable-gpu --disable-gpu-rasterization --max-texture-size=65536");
             logMsg("SiteSnap Studio mode detected: Disabling GPU globally in this process", .{});
+        } else {
+            _ = user32_env.SetEnvironmentVariableA("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist");
+            logMsg("Normal detached window detected: Enabling GPU globally in this process", .{});
         }
     }
 
@@ -4894,6 +5941,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     try easy.run();
+    killNextAppProcess(allocator);
 }
 
 // ─── Win32 Registry & Update & Credentials Helpers ─────────────────────────────

@@ -1681,49 +1681,12 @@ async function resolveStrictProfileNavigationTarget(url, partition = null, title
     };
   }
 
-  // 2. If it's not a dedicated app, we want to prompt the user UNLESS
-  // they explicitly requested a profile bypass (internal ops)
-  if (!options?.bypassPrompt && typeof openProfilePromptDialog === "function") {
-    // If it's from history, we might have an explicitProfileId. 
-    // But user wants to be prompted for unknown links regardless of history state.
-    const selected = await openProfilePromptDialog(url, explicitProfileId || "guest");
-    if (!selected || selected.cancelled) {
-      return { cancelled: true, profileId: null, lockedProfileId: null, partition: "" };
-    }
-
-    const selectedProfileId = PROFILES[selected.profileId] ? selected.profileId : "guest";
-    return {
-      cancelled: false,
-      profileId: selectedProfileId,
-      lockedProfileId: selectedProfileId,
-      partition: resolveNavigationPartition(url, PROFILES[selectedProfileId].partition, title, options),
-    };
-  }
-
-  // 3. Fallback to explicit partition if prompt is unavailable or bypassed
-  if (explicitProfileId && PROFILES[explicitProfileId]) {
-    return {
-      cancelled: false,
-      profileId: explicitProfileId,
-      lockedProfileId: explicitProfileId,
-      partition: resolveNavigationPartition(url, PROFILES[explicitProfileId].partition, title, options),
-    };
-  }
-
-  if (explicitPartition) {
-    return {
-      cancelled: false,
-      profileId: null,
-      lockedProfileId: null,
-      partition: resolveNavigationPartition(url, explicitPartition, title, options),
-    };
-  }
-
+  // 2. If it's not a dedicated app or bookmarked link, default to guest profile directly
   return {
     cancelled: false,
-    profileId: null,
-    lockedProfileId: null,
-    partition: resolveNavigationPartition(url, PARTITIONS.guest, title, options),
+    profileId: "guest",
+    lockedProfileId: "guest",
+    partition: resolveNavigationPartition(url, PROFILES["guest"].partition, title, options),
   };
 }
 

@@ -68,6 +68,17 @@ const ipcRenderer = {
   sendSync: (channel, ...args) => {
     console.log(`[Zero-Native sendSync] SendSync to ${channel}:`, args);
     return { success: true };
+  },
+  sendToHost: (channel, ...args) => {
+    if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === "function") {
+      window.chrome.webview.postMessage(JSON.stringify({
+        method: "ipc:send-to-host",
+        payload: {
+          channel: channel,
+          args: args
+        }
+      }));
+    }
   }
 };
 function readArgValue(prefix = "") {

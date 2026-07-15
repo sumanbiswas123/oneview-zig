@@ -7,24 +7,23 @@ PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=commandline
 DefaultDirName={localappdata}\OneView
 DisableDirPage=yes
+DisableReadyPage=yes
 DisableProgramGroupPage=yes
-DisableWelcomePage=yes
-DisableReadyPage=no
+DisableWelcomePage=no
 DisableFinishedPage=yes
 CreateUninstallRegKey=yes
 Uninstallable=yes
 UninstallDisplayName=OneView
 UninstallDisplayIcon={app}\oneview.exe
 OutputDir=.
-OutputBaseFilename=setup
+OutputBaseFilename=OneViewSetup
 SetupIconFile=src\ov-icon.ico
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 
 ; Automatically force close the running application without prompting the user
-CloseApplications=yes
-CloseApplicationsFilter=oneview.exe
+CloseApplications=no
 RestartApplications=no
 
 [Files]
@@ -56,27 +55,9 @@ Root: HKCU; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueN
 Filename: "{app}\oneview.exe"; Description: "Launch OneView"; Flags: nowait
 
 [UninstallRun]
-Filename: "powershell.exe"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -Command ""Stop-Process -Name oneview -Force -ErrorAction SilentlyContinue"""; Flags: runhidden waituntilterminated
+Filename: "taskkill.exe"; Parameters: "/f /im oneview.exe"; Flags: runhidden waituntilterminated
 
 [Code]
-var
-  AutoClickTimer: LongWord;
-
-function SetTimer(hWnd: HWND; nIDEvent, uElapse: LongWord; lpTimerFunc: LongWord): LongWord;
-  external 'SetTimer@user32.dll stdcall';
-function KillTimer(hWnd: HWND; uIDEvent: LongWord): LongBool;
-  external 'KillTimer@user32.dll stdcall';
-
-procedure OnAutoClickTimer(H: HWND; Msg: LongWord; EventVal: LongWord; TimeVal: LongWord);
-begin
-  // Kill the timer so it only fires once
-  KillTimer(WizardForm.Handle, AutoClickTimer);
-  AutoClickTimer := 0;
-  
-  // Programmatically click "Install" on the Ready page
-  WizardForm.NextButton.OnClick(WizardForm.NextButton);
-end;
-
 function InitializeSetup(): Boolean;
 var
   ResultCode: Integer;
@@ -89,15 +70,9 @@ end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
-  // If the Ready to Install page shows, set a 50ms timer to trigger the click
-  if CurPageID = wpReady then
+  if CurPageID = wpWelcome then
   begin
-    AutoClickTimer := SetTimer(WizardForm.Handle, 2, 50, CreateCallback(@OnAutoClickTimer));
+    // Post a BM_CLICK message (245) to click the Next button automatically once the Welcome page is shown
+    PostMessage(WizardForm.NextButton.Handle, 245, 0, 0);
   end;
-end;
-
-procedure DeinitializeSetup();
-begin
-  if AutoClickTimer <> 0 then
-    KillTimer(WizardForm.Handle, AutoClickTimer);
 end;
