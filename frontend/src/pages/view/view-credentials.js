@@ -386,6 +386,13 @@ export function createViewCredentialsManager({
     const list = getCredentialCache()[profileId] || [];
     let best = null;
     let bestScore = -1;
+    let lastUsedUsername = "";
+    try {
+      const host = normalizeDomain(rawUrl);
+      if (host) {
+        lastUsedUsername = localStorage.getItem(`oneview:last-used-username:${profileId}:${host}`) || "";
+      }
+    } catch (_) {}
 
     list.forEach((item) => {
       const domain = normalizeDomain(item.domain);
@@ -414,10 +421,12 @@ export function createViewCredentialsManager({
         return Math.max(highest, common > 1 ? common : -1);
       }, -1);
       if (score < 0) return;
+      const isLastUsed = lastUsedUsername && String(item.username || "").trim().toLowerCase() === lastUsedUsername.trim().toLowerCase();
       if (
         !best ||
         score > bestScore ||
-        (score === bestScore && domain.length > normalizeDomain(best.domain).length)
+        (score === bestScore && isLastUsed) ||
+        (score === bestScore && !isLastUsed && domain.length > normalizeDomain(best.domain).length)
       ) {
         best = item;
         bestScore = score;
@@ -609,11 +618,12 @@ export function createViewCredentialsManager({
           });
         const isPasswordLike = (el) => {
           if (!el) return false;
+          const isMasked = el.style.webkitTextSecurity === "disc" || el.style.getPropertyValue("-webkit-text-security") === "disc";
           const bag = [el.type, el.name, el.id, el.autocomplete, el.placeholder, el.getAttribute("aria-label")]
             .filter(Boolean)
             .join(" ")
             .toLowerCase();
-          return el.type === "password" || /password|passwd|pwd/.test(bag) || /current-password|new-password/.test(String(el.autocomplete || "").toLowerCase());
+          return el.type === "password" || isMasked || /password|passwd|pwd/.test(bag) || /current-password|new-password/.test(String(el.autocomplete || "").toLowerCase());
         };
         const isOtpLike = (el) => {
           if (!el) return false;
@@ -791,11 +801,12 @@ export function createViewCredentialsManager({
           };
           const isPasswordLike = (el) => {
             if (!el) return false;
+            const isMasked = el.style.webkitTextSecurity === "disc" || el.style.getPropertyValue("-webkit-text-security") === "disc";
             const bag = [el.type, el.name, el.id, el.autocomplete, el.placeholder, el.getAttribute("aria-label")]
               .filter(Boolean)
               .join(" ")
               .toLowerCase();
-            return el.type === "password" || /password|passwd|pwd/.test(bag) || /current-password|new-password/.test(String(el.autocomplete || "").toLowerCase());
+            return el.type === "password" || isMasked || /password|passwd|pwd/.test(bag) || /current-password|new-password/.test(String(el.autocomplete || "").toLowerCase());
           };
           const isOtpLike = (el) => {
             if (!el) return false;
@@ -920,11 +931,12 @@ export function createViewCredentialsManager({
           };
           const isPasswordLike = (el) => {
             if (!el) return false;
+            const isMasked = el.style.webkitTextSecurity === "disc" || el.style.getPropertyValue("-webkit-text-security") === "disc";
             const bag = [el.type, el.name, el.id, el.autocomplete, el.placeholder, el.getAttribute("aria-label")]
               .filter(Boolean)
               .join(" ")
               .toLowerCase();
-            return el.type === "password" || /password|passwd|pwd/.test(bag) || /current-password|new-password/.test(String(el.autocomplete || "").toLowerCase());
+            return el.type === "password" || isMasked || /password|passwd|pwd/.test(bag) || /current-password|new-password/.test(String(el.autocomplete || "").toLowerCase());
           };
           const isOtpLike = (el) => {
             if (!el) return false;
@@ -993,8 +1005,8 @@ export function createViewCredentialsManager({
               (userField && userField.ownerDocument) ||
               document;
             const active = activeDoc.activeElement;
-            const activeInputType =
-              active && active.tagName === "INPUT" ? String(active.type || "").toLowerCase() : "";
+            const isActivePassword = active && active.tagName === "INPUT" && (active.type === "password" || active.style.webkitTextSecurity === "disc" || active.style.getPropertyValue("-webkit-text-security") === "disc");
+            const activeInputType = isActivePassword ? "password" : (active && active.tagName === "INPUT" ? String(active.type || "").toLowerCase() : "");
             if (!username && !password) return;
             window.__oneviewCredentialCapture = {
               username,
@@ -1043,11 +1055,13 @@ export function createViewCredentialsManager({
             doc.addEventListener("input", (event) => {
               const t = event.target;
               if (!t || t.tagName !== "INPUT") return;
-              if (t.type === "password" || t.type === "email" || t.type === "text" || t.type === "tel") {
+              const isPassword = t.type === "password" || t.style.webkitTextSecurity === "disc" || t.style.getPropertyValue("-webkit-text-security") === "disc";
+              if (isPassword || t.type === "email" || t.type === "text" || t.type === "tel") {
                 if (!window.__oneviewAutofillApplying) {
                   window.__oneviewManualCredentialEditAt = Date.now();
-                  if (t.type === "password") window.__oneviewLastPasswordValue = String(t.value || "");
-                  if (t.type === "email" || t.type === "text" || t.type === "tel") {
+                  if (isPassword) {
+                    window.__oneviewLastPasswordValue = String(t.value || "");
+                  } else {
                     window.__oneviewLastUsernameValue = String(t.value || "").trim();
                   }
                 }
@@ -1125,19 +1139,33 @@ export function createViewCredentialsManager({
     if (!tab.credentialAutomationEnabled) return;
 
     const currentUrl = String(webview.getURL?.() || tab.url || "");
-    const captured = await consumeCapturedCredentialFromWebview(webview);
-    const live = captured ? null : await readCredentialInputsFromWebview(webview);
-    const creds = captured || live;
-    if (!creds) return;
+    let captured = null;
+    if (webview._oneviewSubmittedCredential) {
+      captured = webview._oneviewSubmittedCredential;
+      webview._oneviewSubmittedCredential = null;
+    } else {
+      captured = await consumeCapturedCredentialFromWebview(webview);
+    }
+    // ONLY offer saving if we actually captured a submission/click event!
+    // Stale/autofilled or live page state inputs read during the 3-second poll should never trigger database saving.
+    if (!captured) return;
+    const creds = captured;
 
     const trigger = String(creds.trigger || "");
     const activeInputType = String(creds.activeInputType || "").toLowerCase();
-    const isPasswordStillBeingTyped = activeInputType === "password";
     const isTypingOnlyCapture = trigger === "input";
-    if (
-      (captured && isTypingOnlyCapture && isPasswordStillBeingTyped) ||
-      (!captured && isPasswordStillBeingTyped)
-    ) {
+    if (isTypingOnlyCapture) {
+      // While typing, update in-memory hints, but NEVER trigger database save!
+      const domain = pickCredentialStorageDomain(String(creds.url || webview.getURL() || ""));
+      const username = sanitizeCredentialUsername(creds.username);
+      const incomingLooksSuspicious =
+        Boolean(username) &&
+        Boolean(creds.password) &&
+        username.toLowerCase() === String(creds.password).toLowerCase();
+      if (username && !incomingLooksSuspicious && domain) {
+        ensureTabCredentialHints(tab)[domain] = username;
+        tab.lastUsernameHint = username;
+      }
       return;
     }
 
@@ -1197,7 +1225,15 @@ export function createViewCredentialsManager({
     const cooldownKey = `${profileId}|${domain}|${username}`;
     const now = Date.now();
     const lastPromptAt = rememberPromptCooldown.get(cooldownKey) || 0;
-    if (now - lastPromptAt < 15000) return;
+
+    const existingCred = (getCredentialCache()[profileId] || []).find(
+      (item) =>
+        stripDomainPort(normalizeDomain(item.domain)) === stripDomainPort(domain) &&
+        String(item.username || "").trim().toLowerCase() === username.toLowerCase(),
+    );
+    const isNewOrDifferent = !existingCred || String(existingCred.password || "") !== password;
+
+    if (!isNewOrDifferent && (now - lastPromptAt < 15000)) return;
     rememberPromptCooldown.set(cooldownKey, now);
 
     await refreshCredentialCache();
@@ -1412,7 +1448,9 @@ export function createViewCredentialsManager({
     Object.entries(getCredentialCache()).forEach(([profileId, list]) => {
       list.forEach((item) => {
         const itemDomain = normalizeDomain(item.domain);
-        if (itemDomain === domain || (domain.endsWith(`.${itemDomain}`) && itemDomain.split(".").length > 1)) {
+        const strippedItem = stripDomainPort(itemDomain);
+        const strippedDomain = stripDomainPort(domain);
+        if (strippedItem === strippedDomain || (strippedDomain.endsWith(`.${strippedItem}`) && strippedItem.split(".").length > 1)) {
           const profile = constants.PROFILES[profileId] || { name: profileId, color: "#ccc" };
           allCreds.push({ 
             ...item, 
@@ -1449,7 +1487,7 @@ export function createViewCredentialsManager({
     startCredentialCapturePolling,
     handleCredentialFieldInteraction,
     hideCredentialDropdown: () => {
-      // Logic moved to webview-preload
+      // Handled inside webview-preload
     }
   };
 }

@@ -769,7 +769,7 @@ function installCredentialFieldBridge() {
   const isCredentialLike = (el) => {
     if (!el || el.tagName !== "INPUT") return false;
     const type = String(el.type || "").toLowerCase();
-    if (type === "password") return true;
+    if (type === "password" || el.style.webkitTextSecurity === "disc" || el.style.getPropertyValue("-webkit-text-security") === "disc") return true;
     const name = String(el.name || "").toLowerCase();
     const id = String(el.id || "").toLowerCase();
     const autocomplete = String(el.autocomplete || "").toLowerCase();
@@ -780,12 +780,18 @@ function installCredentialFieldBridge() {
 
   const handleFieldInteraction = (event) => {
     const target = event.target;
-    if (!isCredentialLike(target)) {
-      if (event.type === "click") {
-        hideDropdown();
-      }
-      return;
+    if (window.__oneviewAutofillApplying) return;
+    if (!isCredentialLike(target)) return;
+
+    if (!window.__oneviewAutofillApplying) {
+      window.__oneviewManualCredentialEditAt = Date.now();
     }
+
+    try {
+      target.setAttribute("autocomplete", "oneview-disabled");
+      target.setAttribute("autocorrect", "off");
+      target.setAttribute("spellcheck", "false");
+    } catch (_) {}
 
     const rect = target.getBoundingClientRect();
     window.__oneviewActiveCredentialField = target;
@@ -806,7 +812,13 @@ function installCredentialFieldBridge() {
 
   const hideDropdown = () => {
     const existing = document.getElementById("oneview-credential-dropdown");
-    if (existing) existing.remove();
+    if (existing) {
+      existing.remove();
+      if (window.__oneviewCredKeydownHandler) {
+        document.removeEventListener("keydown", window.__oneviewCredKeydownHandler, true);
+        window.__oneviewCredKeydownHandler = null;
+      }
+    }
   };
 
   window.__oneviewShowCredentialDropdown = (creds) => {
@@ -865,7 +877,7 @@ function installCredentialFieldBridge() {
           cursor: pointer;
           transition: all 0.15s ease;
         }
-        .oneview-cred-item:hover {
+        .oneview-cred-item:hover, .oneview-cred-item.active {
           background: rgba(0, 0, 0, 0.04);
         }
         .oneview-cred-icon {
@@ -907,7 +919,7 @@ function installCredentialFieldBridge() {
           }
           .oneview-cred-username { color: #f1f5f9; }
           .oneview-cred-profile { color: #94a3b8; }
-          .oneview-cred-item:hover { background: rgba(255, 255, 255, 0.05); }
+          .oneview-cred-item:hover, .oneview-cred-item.active { background: rgba(255, 255, 255, 0.05); }
         }
       `;
       document.head.appendChild(style);
@@ -946,7 +958,8 @@ function installCredentialFieldBridge() {
 
     // Events
     dropdown.querySelectorAll(".oneview-cred-item").forEach(item => {
-      item.onclick = (e) => {
+      item.onmousedown = (e) => {
+        e.preventDefault();
         e.stopPropagation();
         const idx = parseInt(item.dataset.index);
         const selected = creds[idx];
@@ -954,6 +967,45 @@ function installCredentialFieldBridge() {
         hideDropdown();
       };
     });
+
+    // Keyboard navigation
+    let activeIdx = -1;
+    const items = dropdown.querySelectorAll(".oneview-cred-item");
+    const updateActiveItem = () => {
+      items.forEach((item, idx) => {
+        if (idx === activeIdx) {
+          item.classList.add("active");
+          item.scrollIntoView({ block: "nearest" });
+        } else {
+          item.classList.remove("active");
+        }
+      });
+    };
+
+    window.__oneviewCredKeydownHandler = (e) => {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        activeIdx = (activeIdx + 1) % items.length;
+        updateActiveItem();
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        activeIdx = (activeIdx - 1 + items.length) % items.length;
+        updateActiveItem();
+      } else if (e.key === "Enter") {
+        if (activeIdx >= 0 && activeIdx < items.length) {
+          e.preventDefault();
+          const event = new MouseEvent("mousedown", {
+            bubbles: true,
+            cancelable: true,
+            view: window
+          });
+          items[activeIdx].dispatchEvent(event);
+        }
+      } else if (e.key === "Escape") {
+        hideDropdown();
+      }
+    };
+    document.addEventListener("keydown", window.__oneviewCredKeydownHandler, true);
 
     // Auto hide on scroll or click elsewhere
     const scrollHandler = () => hideDropdown();
@@ -964,7 +1016,90 @@ function installCredentialFieldBridge() {
   };
 
   document.addEventListener("focusin", handleFieldInteraction, true);
-  document.addEventListener("click", handleFieldInteraction, true);
+  document.addEventListener("click", (e) => {
+    const target = e.target;
+    if (!isCredentialLike(target) && !target.closest("#oneview-credential-dropdown")) {
+      hideDropdown();
+    }
+  }, true);
+
+  // Check if we successfully logged in on the previous page
+  try {
+    const pending = sessionStorage.getItem("oneview:pending-username");
+    if (pending) {
+      const uStr = String(window.location.href).toLowerCase();
+      const isStillLoginPage = uStr.includes("login") || uStr.includes("signin") || uStr.includes("auth");
+      if (!isStillLoginPage) {
+        ipcRenderer.sendToHost("oneview:credential-login-attempted", {
+          username: pending,
+          url: window.location.href
+        });
+        sessionStorage.removeItem("oneview:pending-username");
+      }
+    }
+  } catch (_) {}
+
+  // Form submit and button click interceptors to capture login attempts
+  const captureAndSendSubmittedCredential = (container) => {
+    const inputs = container.querySelectorAll("input");
+    let username = "";
+    let password = "";
+    let hasPassword = false;
+    for (const input of inputs) {
+      const isPassword = input.type === "password" || input.style.webkitTextSecurity === "disc" || input.style.getPropertyValue("-webkit-text-security") === "disc";
+      if (isPassword && input.value) {
+        hasPassword = true;
+        password = input.value;
+      } else if (isCredentialLike(input) && input.value) {
+        username = input.value;
+      }
+    }
+    if (hasPassword && username && password) {
+      window.__oneviewPendingLoginUsername = username;
+      try {
+        sessionStorage.setItem("oneview:pending-username", username);
+      } catch (_) {}
+
+      ipcRenderer.sendToHost("oneview:credential-submitted", {
+        username: username,
+        password: password,
+        url: window.location.href,
+        trigger: "submit",
+        activeInputType: "",
+        otpLike: false
+      });
+    }
+  };
+
+  document.addEventListener("submit", (event) => {
+    const form = event.target;
+    if (!form) return;
+    captureAndSendSubmittedCredential(form);
+  }, true);
+
+  document.addEventListener("click", (event) => {
+    const target = event.target;
+    if (target && (target.tagName === "BUTTON" || (target.tagName === "INPUT" && target.type === "submit"))) {
+      const form = target.form || target.closest("form");
+      const container = form || document;
+      captureAndSendSubmittedCredential(container);
+    }
+  }, true);
+
+  // Mutation observer to dynamically convert password fields to masked text fields (suppresses native browser autofill)
+  const maskPasswords = () => {
+    document.querySelectorAll("input[type='password']").forEach((el) => {
+      try {
+        el.type = "text";
+        el.style.webkitTextSecurity = "disc";
+        el.style.setProperty("-webkit-text-security", "disc");
+        el.setAttribute("autocomplete", "oneview-disabled");
+      } catch (_) {}
+    });
+  };
+  maskPasswords();
+  const pwdObserver = new MutationObserver(maskPasswords);
+  pwdObserver.observe(document, { childList: true, subtree: true });
 }
 
 try {

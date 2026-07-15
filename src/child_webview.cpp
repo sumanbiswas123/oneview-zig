@@ -1030,6 +1030,24 @@ static std::wstring GetCPU_UDFPath() {
     return L"";
 }
 
+static std::wstring GetNormalUDFPath() {
+    wchar_t appdata[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, appdata))) {
+        std::wstring path(appdata);
+        path += L"\\OneView\\WebViewData";
+        return path;
+    }
+    return L"";
+}
+
+static void CleanSavedPasswords(const std::wstring& udfPath) {
+    if (udfPath.empty()) return;
+    std::wstring loginDataPath = udfPath + L"\\EBWebView\\Default\\Login Data";
+    DeleteFileW(loginDataPath.c_str());
+    std::wstring loginDataJournal = udfPath + L"\\EBWebView\\Default\\Login Data-journal";
+    DeleteFileW(loginDataJournal.c_str());
+}
+
 // Custom completed handler for pre-initializing the global environment
 class GlobalEnvironmentCompletedHandler : public ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler {
 private:
@@ -1188,11 +1206,11 @@ public:
         if (SUCCEEDED(m_parent->webview->get_Settings(&settings)) && settings) {
             settings->put_AreDefaultContextMenusEnabled(TRUE);
             settings->put_AreDevToolsEnabled(TRUE);
-            // Enable native password autosave and autofill (works like Edge/Chrome)
+            // Disable native password autosave and autofill (we use custom OneView dropdown instead)
             ICoreWebView2Settings4* settings4 = nullptr;
             if (SUCCEEDED(settings->QueryInterface(IID_ICoreWebView2Settings4, (void**)&settings4)) && settings4) {
-                settings4->put_IsPasswordAutosaveEnabled(TRUE);
-                settings4->put_IsGeneralAutofillEnabled(TRUE);
+                settings4->put_IsPasswordAutosaveEnabled(FALSE);
+                settings4->put_IsGeneralAutofillEnabled(FALSE);
                 settings4->Release();
             }
             settings->Release();
@@ -1421,13 +1439,8 @@ extern "C" {
         fflush(stdout);
         g_isInitializingEnv = true;
 
-        // Use a persistent user data folder so native password manager saves across sessions
-        wchar_t appdata[MAX_PATH] = {};
-        std::wstring udf;
-        if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, appdata))) {
-            udf = std::wstring(appdata) + L"\\OneView\\WebViewData";
-        }
-
+        std::wstring udf = GetNormalUDFPath();
+        CleanSavedPasswords(udf);
         GlobalEnvironmentCompletedHandler* handler = new GlobalEnvironmentCompletedHandler(false);
         HRESULT hr = g_CreateCoreWebView2EnvironmentWithOptions(nullptr, udf.empty() ? nullptr : udf.c_str(), nullptr, handler);
         handler->Release();
@@ -1511,9 +1524,12 @@ extern "C" {
             HRESULT hr = S_OK;
             if (disable_gpu) {
                 std::wstring cpu_udf = GetCPU_UDFPath();
+                CleanSavedPasswords(cpu_udf);
                 hr = g_CreateCoreWebView2EnvironmentWithOptions(nullptr, cpu_udf.c_str(), nullptr, handler);
             } else {
-                hr = g_CreateCoreWebView2EnvironmentWithOptions(nullptr, nullptr, nullptr, handler);
+                std::wstring normal_udf = GetNormalUDFPath();
+                CleanSavedPasswords(normal_udf);
+                hr = g_CreateCoreWebView2EnvironmentWithOptions(nullptr, normal_udf.c_str(), nullptr, handler);
             }
             printf("[C++ DEBUG] CreateCoreWebView2EnvironmentWithOptions returned hr=0x%lX\n", hr);
             fflush(stdout);

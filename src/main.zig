@@ -44,6 +44,24 @@ extern "c" fn child_webview_pause_download(id: [*:0]const u8) void;
 extern "c" fn child_webview_resume_download(id: [*:0]const u8) void;
 extern "c" fn child_webview_cancel_download(id: [*:0]const u8) void;
 
+fn stripPort(domain: []const u8) []const u8 {
+    if (std.mem.lastIndexOfScalar(u8, domain, ':')) |colon_idx| {
+        const post = domain[colon_idx + 1..];
+        var is_digit = true;
+        for (post) |c| {
+            if (c < '0' or c > '9') {
+                is_digit = false;
+                break;
+            }
+        }
+        if (is_digit and post.len > 0) {
+            return domain[0..colon_idx];
+        }
+    }
+    return domain;
+}
+
+
 
 // ─── Native file operations (WinINet download, Shell32 unzip, SHFileOperation delete) ──
 extern "c" fn native_download_file(url: [*:0]const u8, target_path: [*:0]const u8) c_int;
@@ -2369,6 +2387,7 @@ fn handleConnection(ctx: ConnCtx) void {
         return;
     }
 
+
     if (std.mem.eql(u8, url_path, "/api/save-credential")) {
         var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
             sendJson(ctx.sock, "{\"success\":false,\"message\":\"Invalid JSON\"}");
@@ -2433,7 +2452,7 @@ fn handleConnection(ctx: ConnCtx) void {
                 const item_prof = if (item.object.get("profileId")) |v| v.string else "";
                 const item_dom = if (item.object.get("domain")) |v| v.string else "";
                 const item_user = if (item.object.get("username")) |v| v.string else "";
-                if (std.mem.eql(u8, item_prof, profile_id) and std.mem.eql(u8, item_dom, domain) and std.mem.eql(u8, item_user, username)) {
+                if (std.mem.eql(u8, item_prof, profile_id) and std.mem.eql(u8, stripPort(item_dom), stripPort(domain)) and std.ascii.eqlIgnoreCase(item_user, username)) {
                     _ = creds_list.orderedRemove(idx);
                     continue;
                 }
@@ -2525,7 +2544,7 @@ fn handleConnection(ctx: ConnCtx) void {
                 const item_prof = if (item.object.get("profileId")) |v| v.string else "";
                 const item_dom = if (item.object.get("domain")) |v| v.string else "";
                 const item_user = if (item.object.get("username")) |v| v.string else "";
-                if (std.mem.eql(u8, item_prof, profile_id) and std.mem.eql(u8, item_dom, domain) and std.mem.eql(u8, item_user, username)) {
+                if (std.mem.eql(u8, item_prof, profile_id) and std.mem.eql(u8, stripPort(item_dom), stripPort(domain)) and std.ascii.eqlIgnoreCase(item_user, username)) {
                     _ = creds_list.orderedRemove(idx);
                     removed = true;
                     continue;
@@ -3989,11 +4008,28 @@ const INIT_SCRIPT =
     \\    }
     \\    return url;
     \\  }
+    \\  function checkLoginSuccess(url, status) {
+    \\    const uStr = String(url || "").toLowerCase();
+    \\    if (uStr.includes("login") || uStr.includes("signin") || uStr.includes("auth")) {
+    \\      if (status >= 200 && status < 300) {
+    \\        if (window.__oneviewPendingLoginUsername && window.chrome && window.chrome.webview) {
+    \\          window.chrome.webview.postMessage(JSON.stringify({
+    \\            type: "ipc-message",
+    \\            channel: "oneview:credential-login-attempted",
+    \\            args: [{ username: window.__oneviewPendingLoginUsername, url: window.location.href }]
+    \\          }));
+    \\          window.__oneviewPendingLoginUsername = null;
+    \\          try { sessionStorage.removeItem("oneview:pending-username"); } catch (e) {}
+    \\        }
+    \\      }
+    \\    }
+    \\  }
     \\  // Patch fetch
     \\  const _fetch = window.fetch.bind(window);
     \\  window.fetch = function(url, opts) {
     \\    let finalUrl = url;
     \\    let finalOpts = opts || {};
+    \\    const rawUrl = (url instanceof Request) ? url.url : url;
     \\    if (url instanceof Request) {
     \\      const rew = rewrite(url.url);
     \\      if (rew !== url.url) {
@@ -4007,7 +4043,10 @@ const INIT_SCRIPT =
     \\      }
     \\      finalUrl = rew;
     \\    }
-    \\    return _fetch(finalUrl, finalOpts);
+    \\    return _fetch(finalUrl, finalOpts).then(function(res) {
+    \\      checkLoginSuccess(rawUrl, res.status);
+    \\      return res;
+    \\    });
     \\  };
     \\  // Patch XMLHttpRequest
     \\  const _open = XMLHttpRequest.prototype.open;
@@ -4017,6 +4056,9 @@ const INIT_SCRIPT =
     \\    if (rew !== url) {
     \\      this.withCredentials = true;
     \\    }
+    \\    this.addEventListener('load', function() {
+    \\      checkLoginSuccess(url, this.status);
+    \\    });
     \\    return res;
     \\  };
     \\
@@ -5272,6 +5314,10 @@ fn onChildWebviewMessage(key_ptr: [*:0]const u8, message_ptr: [*:0]const u8) cal
 
         const eval_js_z = allocator.dupeZ(u8, eval_js) catch return;
         defer allocator.free(eval_js_z);
+
+        if (app.main_webview) |main_wv| {
+            main_wv.eval(eval_js_z) catch {};
+        }
 
     } else if (std.mem.eql(u8, method, "request-autofill")) {
         if (payload_val == .object) {

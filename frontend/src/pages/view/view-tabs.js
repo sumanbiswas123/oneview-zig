@@ -812,11 +812,40 @@ export function createViewTabsManager({
       } else if (event.channel === "oneview:credential-selected") {
         const cred = event.args[0];
         if (cred) {
+          wv.executeJavaScript("window.__oneviewManualCredentialEditAt = 0;", true).catch(() => {});
           // 1. Fill the field
           scheduleCredentialAutofill(wv, cred);
           // 2. Switch profile if needed
           if (cred.profileId && cred.profileId !== getCurrentProfileId()) {
             applyProfileSelection(cred.profileId);
+          }
+          // Save as last used
+          try {
+            const u = wv.getURL();
+            const host = u ? new URL(u).hostname.toLowerCase() : "";
+            if (host) {
+              localStorage.setItem(`oneview:last-used-username:${cred.profileId || getCurrentProfileId()}:${host}`, cred.username);
+            }
+          } catch (_) {}
+        }
+      } else if (event.channel === "oneview:credential-login-attempted") {
+        const payload = event.args[0];
+        if (payload && payload.username) {
+          try {
+            const host = payload.url ? new URL(payload.url).hostname.toLowerCase() : "";
+            if (host) {
+              localStorage.setItem(`oneview:last-used-username:${getCurrentProfileId()}:${host}`, payload.username);
+            }
+          } catch (_) {}
+        }
+      } else if (event.channel === "oneview:credential-submitted") {
+        const payload = event.args[0];
+        if (payload) {
+          wv._oneviewSubmittedCredential = payload;
+          const currentTabId = wv.id.replace("webview-", "");
+          const boundTab = getTabs().find((tab) => tab.id === currentTabId);
+          if (boundTab) {
+            maybeOfferRememberCredentials(wv, boundTab);
           }
         }
       }
