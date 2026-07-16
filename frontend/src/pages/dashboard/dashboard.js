@@ -3135,6 +3135,20 @@ async function openUrlInView(
 export async function launchDashboardApp(appId, app) {
   if (!appId) return;
 
+  // Intercept SiteSnap Studio to open in its dedicated detached mode
+  if (appId === "sitesnap-studio" || String(app?.name || "").toLowerCase().includes("sitesnap")) {
+    if (window.api && typeof window.api.openDetachedViewWindow === "function") {
+      window.api.openDetachedViewWindow({
+        url: "",
+        title: "SiteSnap Studio",
+        partition: "sitesnap"
+      }).catch((err) => console.error("Failed to open SiteSnap Studio detached window:", err));
+    } else {
+      showToast("Detached window API not available", "warning");
+    }
+    return;
+  }
+
   // Extensions only navigate to the View page
   if (getDashboardAppKind(app) === "extension") {
     const targetUrl = app.linkUrl || app.link || app.rootUrl || app.oneviewUrl || "";

@@ -29,6 +29,7 @@ RestartApplications=no
 [Files]
 Source: "zig-out\bin\oneview.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "ui\*"; DestDir: "{app}\ui"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{userdesktop}\OneView"; Filename: "{app}\oneview.exe"; IconFilename: "{app}\oneview.exe"

@@ -372,8 +372,8 @@ export function createViewSettingsManager({
             <label>Password</label>
             <div class="password-input-wrapper" style="position: relative; display: flex; align-items: stretch;">
               <input type="password" id="nativePasswordSecretInput" placeholder="••••••••" required style="flex: 1; padding-right: 40px;" />
-              <button type="button" id="nativePasswordToggleEye" class="password-visibility-toggle" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center; color: #666; font-size: 18px;">
-                👁️
+              <button type="button" id="nativePasswordToggleEye" class="password-visibility-toggle" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center; color: #666;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
               </button>
             </div>
           </div>
@@ -383,7 +383,7 @@ export function createViewSettingsManager({
           </div>
           <button type="submit" class="native-settings-action" style="grid-column: 1 / -1; background: #3b82f6; color: white; font-weight: 600; padding: 10px 14px;">Save Credential</button>
         </form>
-
+ 
         <div class="native-settings-section-head" style="margin-top: 24px;">
           <h3>Saved Passwords</h3>
           <p>${rows.length} credential${rows.length !== 1 ? 's' : ''} stored</p>
@@ -396,7 +396,12 @@ export function createViewSettingsManager({
                 <div class="password-item" data-key="${escapeHtml(row.key)}">
                   <div><strong>${escapeHtml(row.domain)}</strong><div class="password-meta">${escapeHtml(row.profileId)}</div></div>
                   <div>${escapeHtml(row.username)}</div>
-                  <div class="password-secret">${escapeHtml(row.password)}</div>
+                  <div class="password-secret-container" style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                    <span class="password-secret" data-password="${escapeHtml(row.password)}" style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; word-break: break-all;">••••••••</span>
+                    <button type="button" class="password-list-toggle-eye" style="background: none; border: none; cursor: pointer; padding: 4px; display: inline-flex; align-items: center; justify-content: center; color: #666; margin-left: auto;">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                    </button>
+                  </div>
                   <div class="password-actions">
                     <button type="button" class="password-action-btn" data-action="edit">Edit</button>
                     <button type="button" class="password-action-btn" data-action="delete">Delete</button>
@@ -624,7 +629,34 @@ export function createViewSettingsManager({
         if (secretInput) {
           const isPassword = secretInput.type === "password";
           secretInput.type = isPassword ? "text" : "password";
-          eyeButton.textContent = isPassword ? "🙈" : "👁️";
+          eyeButton.innerHTML = isPassword ? `
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          ` : `
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          `;
+        }
+        return;
+      }
+
+      const listEyeButton = event.target.closest(".password-list-toggle-eye");
+      if (listEyeButton) {
+        event.preventDefault();
+        const secretSpan = listEyeButton.parentNode.querySelector(".password-secret");
+        if (secretSpan) {
+          const rawPassword = secretSpan.dataset.password || "";
+          const isMasked = secretSpan.textContent === "••••••••";
+          
+          if (isMasked) {
+            secretSpan.textContent = rawPassword;
+            listEyeButton.innerHTML = `
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            `;
+          } else {
+            secretSpan.textContent = "••••••••";
+            listEyeButton.innerHTML = `
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+            `;
+          }
         }
         return;
       }

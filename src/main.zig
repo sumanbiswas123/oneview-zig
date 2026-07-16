@@ -3,7 +3,7 @@ const Webview = @import("webview").Webview;
 
 const EasyApp = Webview.Easy(App);
 
-const UI_ROOT = "C:\\Users\\SumanBiswas\\Downloads\\oneview_port\\ui";
+var UI_ROOT: []const u8 = "ui";
 const SERVER_PORT: u16 = 9731;
 const SERVER_PORT_STR = std.fmt.comptimePrint("{d}", .{SERVER_PORT});
 const BACKEND_HOST = "10.215.56.196";
@@ -5670,6 +5670,14 @@ fn onChildWebviewMessage(key_ptr: [*:0]const u8, message_ptr: [*:0]const u8) cal
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
 
+    // Detect and assign UI_ROOT dynamically
+    if (detectUiRoot(allocator)) |detected_path| {
+        UI_ROOT = detected_path;
+        logMsg("Detected UI_ROOT: {s}", .{UI_ROOT});
+    } else |err| {
+        logMsg("Failed to detect UI_ROOT (using default 'ui'): {}", .{err});
+    }
+
     // 1. Startup cleanup of old exe
     {
         const exe_path = getOwnExePath(allocator) orelse "";
@@ -6343,6 +6351,46 @@ fn getOwnExePath(allocator: std.mem.Allocator) ?[]const u8 {
     const len = GetModuleFileNameA(null, &buf, buf.len);
     if (len == 0) return null;
     return allocator.dupe(u8, buf[0..len]) catch null;
+}
+
+fn detectUiRoot(allocator: std.mem.Allocator) ![]const u8 {
+    const exe_path = getOwnExePath(allocator) orelse return error.ExePathNotFound;
+    defer allocator.free(exe_path);
+    
+    const exe_dir = std.fs.path.dirname(exe_path) orelse ".";
+    
+    // 1. Check if "ui" exists in the same folder as the executable (Production/Installed)
+    const prod_path = try std.fs.path.join(allocator, &.{ exe_dir, "ui" });
+    errdefer allocator.free(prod_path);
+    
+    const prod_check = try std.fs.path.join(allocator, &.{ prod_path, "lib\\webview-preload.js" });
+    defer allocator.free(prod_check);
+    const prod_check_z = try allocator.dupeZ(u8, prod_check);
+    defer allocator.free(prod_check_z);
+    
+    if (fopen(prod_check_z.ptr, "rb")) |fh| {
+        _ = fclose(fh);
+        return prod_path;
+    }
+    allocator.free(prod_path);
+    
+    // 2. Check if "ui" exists two levels up (Development build: zig-out/bin/oneview.exe -> ui is at ../../ui)
+    const dev_path = try std.fs.path.join(allocator, &.{ exe_dir, "..\\..\\ui" });
+    errdefer allocator.free(dev_path);
+    
+    const dev_check = try std.fs.path.join(allocator, &.{ dev_path, "lib\\webview-preload.js" });
+    defer allocator.free(dev_check);
+    const dev_check_z = try allocator.dupeZ(u8, dev_check);
+    defer allocator.free(dev_check_z);
+    
+    if (fopen(dev_check_z.ptr, "rb")) |fh| {
+        _ = fclose(fh);
+        return dev_path;
+    }
+    allocator.free(dev_path);
+    
+    // 3. Fallback to local "./ui" relative to current working directory
+    return try allocator.dupe(u8, "ui");
 }
 
 fn getSystemUsername(allocator: std.mem.Allocator) ?[]const u8 {

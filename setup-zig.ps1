@@ -39,9 +39,10 @@ if (Test-Path $ZigExePath) {
     Write-Host "Local Zig compiler successfully installed!" -ForegroundColor Green
     Write-Host "Path: $ZigExePath" -ForegroundColor Green
     
-    # Create the run-portable helper script
+    # Create the run-portable helper script using a path relative to the script directory
+    $RelativeFolder = $ZigExeDir.FullName.Substring($PSScriptRoot.Length).TrimStart('\')
     $RunnerScript = @"
-`$ZigDir = "$($ZigExeDir.FullName)"
+`$ZigDir = Join-Path `$PSScriptRoot "$RelativeFolder"
 `$env:Path = "`$ZigDir;" + `$env:Path
 Write-Host "Running with local portable Zig..." -ForegroundColor Cyan
 zig build run

@@ -1039,8 +1039,19 @@ function installCredentialFieldBridge() {
     }
   } catch (_) {}
 
+  const logDebug = (msg) => {
+    console.log(`[OneView][CredentialDebug] ${msg}`);
+    try {
+      if (window.api && typeof window.api.webContentCall === "function") {
+        window.api.webContentCall("log-message", { message: `[CredentialDebug] ${msg}` });
+      }
+    } catch (_) {}
+  };
+
   // Form submit and button click interceptors to capture login attempts
   const captureAndSendSubmittedCredential = (container) => {
+    logDebug(`captureAndSendSubmittedCredential started on container: ${container ? (container.tagName || "document") : "null"}`);
+    if (!container) return;
     const inputs = container.querySelectorAll("input");
     let username = "";
     let password = "";
@@ -1054,12 +1065,24 @@ function installCredentialFieldBridge() {
         username = input.value;
       }
     }
-    if (hasPassword && username && password) {
+    
+    logDebug(`Found username: "${username}", hasPassword: ${hasPassword}`);
+
+    if (username) {
       window.__oneviewPendingLoginUsername = username;
       try {
         sessionStorage.setItem("oneview:pending-username", username);
       } catch (_) {}
+      logDebug(`Saved pending username: "${username}"`);
+    } else {
+      try {
+        username = window.__oneviewPendingLoginUsername || sessionStorage.getItem("oneview:pending-username") || "";
+        logDebug(`No username field found, fell back to pending username: "${username}"`);
+      } catch (_) {}
+    }
 
+    if (hasPassword && password) {
+      logDebug(`Sending credential-submitted IPC to host: username="${username}"`);
       ipcRenderer.sendToHost("oneview:credential-submitted", {
         username: username,
         password: password,
@@ -1068,23 +1091,117 @@ function installCredentialFieldBridge() {
         activeInputType: "",
         otpLike: false
       });
+    } else {
+      logDebug(`Credential submission check failed: hasPassword=${hasPassword}, username="${username}", passwordLength=${password ? password.length : 0}`);
     }
   };
 
-  document.addEventListener("submit", (event) => {
-    const form = event.target;
-    if (!form) return;
-    captureAndSendSubmittedCredential(form);
-  }, true);
+  const attachedDocuments = new WeakSet();
 
-  document.addEventListener("click", (event) => {
-    const target = event.target;
-    if (target && (target.tagName === "BUTTON" || (target.tagName === "INPUT" && target.type === "submit"))) {
-      const form = target.form || target.closest("form");
-      const container = form || document;
-      captureAndSendSubmittedCredential(container);
+  const attachSubmitListeners = (doc) => {
+    if (!doc) return;
+    try {
+      if (attachedDocuments.has(doc)) return;
+      attachedDocuments.add(doc);
+      logDebug(`Attaching credential capture listeners to document at ${doc.location ? doc.location.href : "unknown"}`);
+    } catch (e) {
+      logDebug(`Failed to access document for attaching listeners: ${e.message}`);
+      return;
     }
-  }, true);
+
+    doc.addEventListener("submit", (event) => {
+      const form = event.target;
+      if (!form) return;
+      logDebug(`Form submit event detected in document ${doc.location ? doc.location.href : "unknown"}`);
+      captureAndSendSubmittedCredential(form);
+    }, true);
+
+    const handleButtonInteraction = (btn) => {
+      logDebug(`Button interaction detected on: ${btn.outerHTML ? btn.outerHTML.slice(0, 100) : "button"}`);
+      const form = btn.form || btn.closest("form");
+      const container = form || doc;
+      // Delay slightly so that click handlers have time to commit input values (like React/Okta handlers)
+      setTimeout(() => {
+        captureAndSendSubmittedCredential(container);
+      }, 50);
+    };
+
+    const isTargetButtonLike = (el) => {
+      if (!el) return null;
+      // Match standard buttons, submit inputs, links, or role='button'
+      const btn = el.closest("button, input[type='submit'], [role='button'], a, .button, .btn, .mdc-button");
+      if (btn) return btn;
+      
+      // Handle custom Web Components ending with "-button" (like GSK's custom <gsk-button>)
+      // or elements containing "button" or "submit" in their tag/attributes
+      let current = el;
+      while (current && current !== doc) {
+        if (typeof current.tagName === "string") {
+          const tag = current.tagName.toLowerCase();
+          if (tag.endsWith("-button") || tag.includes("button") || tag.includes("submit")) {
+            return current;
+          }
+          // Also match custom elements containing standard button attributes
+          if (current.hasAttribute("onclick") && (current.getAttribute("label") || current.getAttribute("title"))) {
+            return current;
+          }
+        }
+        current = current.parentNode;
+      }
+      return null;
+    };
+
+    doc.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!target) return;
+      const btn = isTargetButtonLike(target);
+      if (btn) {
+        logDebug(`Button click event detected inside document`);
+        handleButtonInteraction(btn);
+      }
+    }, true);
+
+    doc.addEventListener("mousedown", (event) => {
+      const target = event.target;
+      if (!target) return;
+      const btn = isTargetButtonLike(target);
+      if (btn) {
+        logDebug(`Button mousedown event detected inside document`);
+        handleButtonInteraction(btn);
+      }
+    }, true);
+
+    doc.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        const target = event.target;
+        if (isCredentialLike(target)) {
+          logDebug(`Enter keydown event detected inside document on input field: ${target.name || target.id}`);
+          const form = target.form || target.closest("form") || doc;
+          setTimeout(() => {
+            captureAndSendSubmittedCredential(form);
+          }, 50);
+        }
+      }
+    }, true);
+  };
+
+  const attachToAllFrames = () => {
+    try {
+      attachSubmitListeners(document);
+      const iframes = document.querySelectorAll("iframe");
+      iframes.forEach((frame) => {
+        try {
+          if (frame.contentDocument) {
+            attachSubmitListeners(frame.contentDocument);
+          }
+        } catch (_) {}
+      });
+    } catch (_) {}
+  };
+
+  // Run immediately and periodically to cover dynamically loaded/attached iframes
+  attachToAllFrames();
+  setInterval(attachToAllFrames, 2000);
 
   // Mutation observer to dynamically convert password fields to masked text fields (suppresses native browser autofill)
   const maskPasswords = () => {
