@@ -1143,13 +1143,26 @@ export function createViewCredentialsManager({
     if (webview._oneviewSubmittedCredential) {
       captured = webview._oneviewSubmittedCredential;
       webview._oneviewSubmittedCredential = null;
-    } else {
-      captured = await consumeCapturedCredentialFromWebview(webview);
     }
     // ONLY offer saving if we actually captured a submission/click event!
-    // Stale/autofilled or live page state inputs read during the 3-second poll should never trigger database saving.
     if (!captured) return;
     const creds = captured;
+
+    // Check if the URL changed. If we are still on the exact same login path,
+    // then the login failed or is still in progress (e.g. status 200 returned with an error message).
+    const stripUrl = (u) => {
+      try {
+        const parsed = new URL(u);
+        return (parsed.origin + parsed.pathname).toLowerCase().replace(/\/$/, "");
+      } catch (_) {
+        return String(u || "").split("?")[0].split("#")[0].toLowerCase().replace(/\/$/, "");
+      }
+    };
+    if (creds.url && stripUrl(currentUrl) === stripUrl(creds.url)) {
+      // Put it back in the cache so we can check it again when they actually redirect/navigate
+      webview._oneviewSubmittedCredential = captured;
+      return;
+    }
 
     const trigger = String(creds.trigger || "");
     const activeInputType = String(creds.activeInputType || "").toLowerCase();
@@ -1269,6 +1282,52 @@ export function createViewCredentialsManager({
     );
     if (existing && String(existing.password || "") === password) return;
 
+    function injectToastIntoWebview(webview, message, type = "success") {
+      if (!webview) return;
+      const bg = type === "success" ? "#10b981" : "#ef4444";
+      const script = `
+        (() => {
+          const toast = document.createElement("div");
+          toast.id = "oneview-injected-toast";
+          toast.style.position = "fixed";
+          toast.style.top = "20px";
+          toast.style.right = "20px";
+          toast.style.zIndex = "2147483647";
+          toast.style.background = "${bg}";
+          toast.style.color = "white";
+          toast.style.padding = "12px 24px";
+          toast.style.borderRadius = "8px";
+          toast.style.boxShadow = "0 10px 25px rgba(0,0,0,0.2)";
+          toast.style.fontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+          toast.style.fontSize = "14px";
+          toast.style.fontWeight = "600";
+          toast.style.transition = "all 0.3s ease";
+          toast.style.opacity = "0";
+          toast.style.transform = "translateY(-20px)";
+          toast.textContent = "${message.replace(/"/g, '\\"')}";
+          
+          document.body.appendChild(toast);
+          
+          // Force reflow
+          toast.offsetHeight;
+          
+          // Slide & fade in
+          toast.style.opacity = "1";
+          toast.style.transform = "translateY(0)";
+          
+          // Fade out & remove
+          setTimeout(() => {
+            toast.style.opacity = "0";
+            toast.style.transform = "translateY(-20px)";
+            setTimeout(() => {
+              toast.remove();
+            }, 300);
+          }, 3000);
+        })();
+      `;
+      webview.executeJavaScript(script, true).catch(() => {});
+    }
+
     try {
       const saveResp = await window.api.saveProfileCredential({
         profileId,
@@ -1278,6 +1337,7 @@ export function createViewCredentialsManager({
       });
       if (!saveResp?.success) return;
       await refreshCredentialCache();
+      injectToastIntoWebview(webview, "Password saved successfully.", "success");
     } catch (err) {
       console.warn("Could not save remembered credential:", err);
     }
@@ -1294,7 +1354,8 @@ export function createViewCredentialsManager({
         return;
       }
       if (tab.id !== getActiveTabId()) return;
-      maybeOfferRememberCredentials(webview, tab);
+      // Active database saving is disabled during polling.
+      // Saving only triggers on explicit navigation redirects or 2xx HTTP network success responses.
     }, 3000);
   }
 
@@ -1450,7 +1511,8 @@ export function createViewCredentialsManager({
         const itemDomain = normalizeDomain(item.domain);
         const strippedItem = stripDomainPort(itemDomain);
         const strippedDomain = stripDomainPort(domain);
-        if (strippedItem === strippedDomain || (strippedDomain.endsWith(`.${strippedItem}`) && strippedItem.split(".").length > 1)) {
+        const isVeevaMatch = strippedItem.endsWith("veevavault.com") && strippedDomain.endsWith("veevavault.com");
+        if (strippedItem === strippedDomain || isVeevaMatch || (strippedDomain.endsWith(`.${strippedItem}`) && strippedItem.split(".").length > 1)) {
           const profile = constants.PROFILES[profileId] || { name: profileId, color: "#ccc" };
           allCreds.push({ 
             ...item, 

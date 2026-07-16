@@ -837,16 +837,17 @@ export function createViewTabsManager({
               localStorage.setItem(`oneview:last-used-username:${getCurrentProfileId()}:${host}`, payload.username);
             }
           } catch (_) {}
+          
+          const currentTabId = wv.id.replace("webview-", "");
+          const boundTab = getTabs().find((tab) => tab.id === currentTabId);
+          if (boundTab && boundTab.credentialAutomationEnabled) {
+            maybeOfferRememberCredentials(wv, boundTab);
+          }
         }
       } else if (event.channel === "oneview:credential-submitted") {
         const payload = event.args[0];
         if (payload) {
           wv._oneviewSubmittedCredential = payload;
-          const currentTabId = wv.id.replace("webview-", "");
-          const boundTab = getTabs().find((tab) => tab.id === currentTabId);
-          if (boundTab) {
-            maybeOfferRememberCredentials(wv, boundTab);
-          }
         }
       }
     });
@@ -937,28 +938,33 @@ export function createViewTabsManager({
         boundTab,
       );
 
-      if (boundTab.credentialAutomationEnabled) {
+      const setupCredentialAutomation = async (tab, url, title) => {
+        if (!tab.credentialAutomationEnabled) {
+          stopWebviewBackgroundTasks(wv);
+          return;
+        }
         const assignedProfile = resolveAssignedProfileIdForTab(
-          boundTab,
-          currentUrl,
-          currentTitle,
+          tab,
+          url,
+          title,
         );
         const profileForAutofill =
-          getCredentialScopeIdByPartition(boundTab.partition) ||
+          getCredentialScopeIdByPartition(tab.partition) ||
           assignedProfile ||
           getCurrentProfileId();
         await refreshCredentialCacheIfStale();
         const credential = getAutofillCredentialForTab(
           profileForAutofill,
-          currentUrl,
-          boundTab,
+          url,
+          tab,
         );
         scheduleCredentialAutofill(wv, credential);
-        startCredentialCapturePolling(wv, boundTab);
+        startCredentialCapturePolling(wv, tab);
         installCredentialCaptureHooks(wv);
-      } else {
-        stopWebviewBackgroundTasks(wv);
-      }
+      };
+      wv._oneviewSetupCredentialAutomation = setupCredentialAutomation;
+
+      await setupCredentialAutomation(boundTab, currentUrl, currentTitle);
 
       await syncTabProfileForPage(boundTab, currentUrl, currentTitle, wv);
       applyWebsiteScrollbarTheme(wv, boundTab);
@@ -1000,6 +1006,12 @@ export function createViewTabsManager({
       }
       const historyProfileId = resolveProfileIdForTab(boundTab);
       trackProfileHistory(historyProfileId, currentUrl, wv.getTitle() || boundTab.title || "");
+      if (boundTab.credentialAutomationEnabled) {
+        maybeOfferRememberCredentials(wv, boundTab);
+        if (typeof wv._oneviewSetupCredentialAutomation === "function") {
+          wv._oneviewSetupCredentialAutomation(boundTab, currentUrl, wv.getTitle() || boundTab.title || "");
+        }
+      }
     });
 
     wv.addEventListener("did-navigate-in-page", async (event) => {
@@ -1016,6 +1028,13 @@ export function createViewTabsManager({
 
       const historyProfileId = resolveProfileIdForTab(boundTab);
       trackProfileHistory(historyProfileId, currentUrl, wv.getTitle() || boundTab.title || "");
+
+      if (boundTab.credentialAutomationEnabled) {
+        maybeOfferRememberCredentials(wv, boundTab);
+        if (typeof wv._oneviewSetupCredentialAutomation === "function") {
+          wv._oneviewSetupCredentialAutomation(boundTab, currentUrl, wv.getTitle() || boundTab.title || "");
+        }
+      }
 
       wv.addEventListener("history-changed", (e) => {
         _ = e;
