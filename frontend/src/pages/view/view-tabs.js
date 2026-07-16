@@ -849,6 +849,20 @@ export function createViewTabsManager({
         if (payload) {
           wv._oneviewSubmittedCredential = payload;
         }
+      } else if (event.channel === "oneview:keydown") {
+        const payload = event.args[0];
+        if (payload) {
+          const keyEvent = new KeyboardEvent("keydown", {
+            key: payload.key,
+            ctrlKey: payload.ctrlKey,
+            shiftKey: payload.shiftKey,
+            altKey: payload.altKey,
+            metaKey: payload.metaKey,
+            bubbles: true,
+            cancelable: true
+          });
+          document.dispatchEvent(keyEvent);
+        }
       }
     });
 

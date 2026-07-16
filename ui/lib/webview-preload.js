@@ -1239,6 +1239,35 @@ try {
     exposeGlobal("oneview", bridge);
   }
 
+  document.addEventListener("keydown", (event) => {
+    const key = String(event.key || "").toLowerCase();
+    const isShiftTab = event.key === "Tab" && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey;
+    const isCtrlN = key === "n" && (event.ctrlKey || event.metaKey) && !event.shiftKey;
+    const isCtrlR = key === "r" && (event.ctrlKey || event.metaKey) && !event.shiftKey;
+    const isCtrlShiftR = key === "r" && (event.ctrlKey || event.metaKey) && event.shiftKey;
+
+    if (isShiftTab || isCtrlN || isCtrlR || isCtrlShiftR) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === "function") {
+        window.chrome.webview.postMessage(JSON.stringify({
+          method: "ipc:send-to-host",
+          payload: {
+            channel: "oneview:keydown",
+            args: [{
+              ctrlKey: event.ctrlKey,
+              shiftKey: event.shiftKey,
+              altKey: event.altKey,
+              metaKey: event.metaKey,
+              key: event.key
+            }]
+          }
+        }));
+      }
+    }
+  }, true);
+
   window.addEventListener("load", () => {
     const href = String(window.location.href || "");
     if (href.startsWith(`${APP_PROTOCOL_SCHEME}://`)) {

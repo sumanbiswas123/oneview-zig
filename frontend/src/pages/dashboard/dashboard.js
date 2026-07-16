@@ -4311,3 +4311,75 @@ const updateMaximizedState = () => {
 window.addEventListener("resize", updateMaximizedState);
 updateMaximizedState();
 setTimeout(updateMaximizedState, 500);
+
+// --- Global Shortcuts Handler ---
+document.addEventListener("keydown", (event) => {
+  const key = String(event.key || "").toLowerCase();
+
+  // 1. Shift + Tab -> Switch between Dashboard, View, Appstore
+  if (event.key === "Tab" && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const appStoreContainer = document.getElementById("app-store-container");
+    const viewContent = document.getElementById("view-page-content");
+    const isViewActive = viewContent && viewContent.style.display !== "none";
+    const isAppStoreActive = appStoreContainer && !appStoreContainer.classList.contains("hidden") && (!viewContent || viewContent.style.display === "none");
+
+    const homeBtn = document.getElementById("home-btn");
+    const webviewBtn = document.getElementById("webview-btn");
+    const toolsBtn = document.getElementById("tools-btn");
+
+    if (isViewActive) {
+      if (toolsBtn) toolsBtn.click();
+    } else if (isAppStoreActive) {
+      if (homeBtn) homeBtn.click();
+    } else {
+      if (webviewBtn) webviewBtn.click();
+    }
+    return;
+  }
+
+  // 2. Ctrl + Shift + R -> Refresh whole app
+  if (key === "r" && (event.ctrlKey || event.metaKey) && event.shiftKey) {
+    event.preventDefault();
+    event.stopPropagation();
+    window.location.reload();
+    return;
+  }
+
+  // 3. Ctrl + R -> Refresh active tab in view page, prevent app reload
+  if (key === "r" && (event.ctrlKey || event.metaKey) && !event.shiftKey) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof window.getActiveWebview === "function") {
+      const wv = window.getActiveWebview();
+      if (wv) wv.reload();
+    }
+    return;
+  }
+
+  // 4. Ctrl + N -> Create new tab in view page / Open view page
+  if (key === "n" && (event.ctrlKey || event.metaKey) && !event.shiftKey) {
+    event.preventDefault();
+    event.stopPropagation();
+    const webviewBtn = document.getElementById("webview-btn");
+    const webviewContainer = document.getElementById("web-view-container");
+    const isViewActive = webviewContainer && !webviewContainer.classList.contains("hidden");
+    const hasTabs = typeof window.getTabs === "function" && window.getTabs().length > 0;
+
+    if (hasTabs) {
+      if (!isViewActive && webviewBtn) {
+        webviewBtn.click();
+      }
+      if (typeof window.createTab === "function") {
+        window.createTab();
+      }
+    } else {
+      if (webviewBtn) {
+        webviewBtn.click();
+      }
+    }
+    return;
+  }
+}, true);

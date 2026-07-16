@@ -1086,6 +1086,10 @@ function initViewPage() {
 window.addEventListener("beforeunload", () => {
   closeBrowserExtensionPopup().catch(() => {});
   disposeWebviewRuntime();
+  if (typeof tabs !== "undefined" && Array.isArray(tabs)) {
+    const tabIdsToClose = tabs.map((t) => t.id);
+    closeTabsBulk(tabIdsToClose, { isTeardown: true });
+  }
 });
 
 window.addEventListener("teardown-view-system", () => {
@@ -2298,6 +2302,8 @@ async function openUrlFromDashboard(
 // Expose init function
 window.initViewPage = initViewPage;
 window.createTab = createTab;
+window.getTabs = getTabs;
+window.getActiveWebview = getActiveWebview;
 window.launchInstalledAppFromView = launchInstalledAppFromView;
 window.openUrlFromDashboard = openUrlFromDashboard;
 
