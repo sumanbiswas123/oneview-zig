@@ -106,14 +106,20 @@ function getOneviewManagedManifestName(app = {}) {
 }
 
 function getAppKind(app = {}) {
-  return String(app?.type || app?.runtime || "").trim().toLowerCase() ===
-    "oneview-extension"
-    ? "extension"
-    : "app";
+  const type = String(app?.type || app?.runtime || "").trim().toLowerCase();
+  if (type === "oneview-extension") {
+    return "extension";
+  } else if (type === "website") {
+    return "website";
+  }
+  return "app";
 }
 
 function getAppKindLabel(app = {}) {
-  return getAppKind(app) === "extension" ? "Extension" : "App";
+  const kind = getAppKind(app);
+  if (kind === "extension") return "Extension";
+  if (kind === "website") return "Web App";
+  return "App";
 }
 
 function getAppKindBadgeHtml(app = {}) {
@@ -332,7 +338,7 @@ function setupDevProjectEntry() {
   createBtn.style.display = "none";
   if (!IS_DEV_APP_BUILD) return;
   if (localStorage.getItem("userMaster") !== "true") return;
-  createBtn.style.display = "";
+  // createBtn.style.display = "";
 
   const empId = String(
     localStorage.getItem("emp_id") || localStorage.getItem("username") || "",

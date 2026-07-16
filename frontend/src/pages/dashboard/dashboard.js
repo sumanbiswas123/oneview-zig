@@ -64,13 +64,19 @@ const LOCAL_WEB_APP_TYPES = new Set([
 
 function getDashboardAppKind(app = {}) {
   const type = String(app?.type || app?.runtime || "").trim().toLowerCase();
-  return (type === "oneview-extension" || type === "extension")
-    ? "extension"
-    : "app";
+  if (type === "oneview-extension" || type === "extension") {
+    return "extension";
+  } else if (type === "website") {
+    return "website";
+  }
+  return "app";
 }
 
 function getDashboardAppKindLabel(app = {}) {
-  return getDashboardAppKind(app) === "extension" ? "Extension" : "App";
+  const kind = getDashboardAppKind(app);
+  if (kind === "extension") return "Extension";
+  if (kind === "website") return "Web App";
+  return "App";
 }
 
 let allApps = []; // Cache for all apps list

@@ -613,6 +613,12 @@ body:not(.dashboard-mode) .noise-overlay {
   border-color: rgba(124, 58, 237, 0.24);
 }
 
+.app-kind-badge-website {
+  color: #0369a1;
+  background: rgba(14, 165, 233, 0.12);
+  border-color: rgba(14, 165, 233, 0.24);
+}
+
 .app-channel {
   align-self: flex-start;
   padding: 3px 10px;
@@ -1366,6 +1372,12 @@ body.dark-mode .app-kind-badge-extension {
   color: #ddd6fe;
   background: rgba(124, 58, 237, 0.22);
   border-color: rgba(167, 139, 250, 0.35);
+}
+
+body.dark-mode .app-kind-badge-website {
+  color: #bae6fd;
+  background: rgba(14, 165, 233, 0.2);
+  border-color: rgba(56, 189, 248, 0.32);
 }
 
 body.dark-mode .app-category {
