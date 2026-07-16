@@ -157,3 +157,14 @@ body.dark-mode .aurora-overlay {
   border-radius: 20px;
   box-shadow: var(--glass-shadow);
 }
+
+/* Disable text selection by default across the application chrome */
+html, body, div, span, p, h1, h2, h3, h4, h5, h6, img, a, button, li, ul, ol {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+input, textarea, [contenteditable="true"], [contenteditable="true"] * {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}

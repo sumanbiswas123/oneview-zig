@@ -312,7 +312,7 @@
           >
             <img
               class="profile-pic"
-              src="/assets/user-icon.png"
+              src="/assets/user-icon.webp"
               alt="Profile"
             />
           </button>
@@ -515,6 +515,26 @@
               </svg>
               <span>Set default browser</span>
             </button>
+            <button
+              class="profile-menu-item"
+              id="shortcuts-guide-btn"
+              role="menuitem"
+            >
+              <svg
+                class="menu-icon"
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path
+                  fill="currentColor"
+                  d="M20 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zM4 7h16v10H4V7zm1 2h2v2H5V9zm3 0h2v2H8V9zm3 0h2v2h-2V9zm3 0h2v2h-2V9zm3 0h2v2h-2V9zM5 13h2v2H5v-2zm3 0h8v2H8v-2zm9 0h2v2h-2v-2z"
+                />
+              </svg>
+              <span>Shortcuts</span>
+            </button>
             <button class="profile-menu-item" id="logout" role="menuitem">
               <!-- logout icon -->
               <svg
@@ -599,7 +619,7 @@
                 <span class="btn-text">Apply Leave</span>
               </button>
               <button class="dash-link-btn" id="synapse-link-btn" style="display: none">
-                <img src="/assets/synapse.png" alt="Synapse" />
+                <img src="/assets/synapse.webp" alt="Synapse" />
                 <span class="btn-text">Synapse</span>
               </button>
               <button class="dash-link-btn" id="veeva-link-btn">
@@ -608,7 +628,7 @@
               </button>
               <button class="dash-link-btn" id="contentgen-link-btn">
                 <img
-                  src="/assets/contentgen.png"
+                  src=""
                   data-theme-icon="contentgen"
                   alt="ContentGen"
                 />
@@ -938,6 +958,171 @@
           >
             Let’s set up Teams
           </button>
+        </div>
+      </div>
+    </div>
+    <div
+      id="shortcuts-guide-modal"
+      class="modal-overlay hidden"
+      role="dialog"
+      aria-labelledby="shortcuts-guide-title"
+      aria-hidden="true"
+    >
+      <div class="modal-dialog shortcuts-guide-dialog" style="max-width: min(920px, 90vw); width: 100%; border-radius: 20px; padding: 24px;">
+        <div class="modal-header" style="margin-bottom: 12px;">
+          <h3 id="shortcuts-guide-title" style="display: flex; align-items: center; gap: 8px;">
+            <svg viewBox="0 0 24 24" width="20" height="20" style="color: var(--primary); fill: currentColor;">
+              <path d="M20 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zM4 7h16v10H4V7zm1 2h2v2H5V9zm3 0h2v2H8V9zm3 0h2v2h-2V9zm3 0h2v2h-2V9zm3 0h2v2h-2V9zM5 13h2v2H5v-2zm3 0h8v2H8v-2zm9 0h2v2h-2v-2z" />
+            </svg>
+            <span>Keyboard Shortcuts Guide</span>
+          </h3>
+          <button
+            class="modal-close-btn"
+            id="shortcuts-guide-close-btn"
+            aria-label="Close"
+            title="Close"
+          ></button>
+        </div>
+        
+        <!-- Tab Bar Header -->
+        <div style="display: flex; gap: 8px; margin-bottom: 20px; border-bottom: 1px solid var(--glass-border, rgba(0, 0, 0, 0.08)); padding-bottom: 8px;">
+          <button id="tab-global-btn" class="modal-btn" style="background: var(--primary); color: white; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 600; cursor: pointer; font-family: inherit; font-size: 13px;">Global Shortcuts</button>
+          <button id="tab-browser-btn" class="modal-btn" style="background: transparent; color: var(--text-muted); border: 1px solid transparent; padding: 8px 16px; border-radius: 8px; font-weight: 600; cursor: pointer; font-family: inherit; font-size: 13px;">Browser Shortcuts</button>
+        </div>
+
+        <div class="modal-body" style="padding: 0; color: var(--text-main); text-align: left;">
+          <p style="margin: 0 0 20px 0 !important; font-size: 13.5px; color: var(--text-muted); line-height: 1.5;">
+            Use these shortcuts to navigate and control OneView quickly from anywhere in the app.
+          </p>
+          
+          <!-- Tab 1: Global Shortcuts -->
+          <div id="shortcuts-tab-global" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; width: 100%;">
+            
+            <!-- Cell 1: Switch App Sections -->
+            <div style="background: var(--glass-bg, rgba(255,255,255,0.4)); border: 1px solid var(--glass-border, rgba(0,0,0,0.08)); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.02);">
+              <div>
+                <div style="font-weight: 700; font-size: 13.5px; margin-bottom: 4px;">Switch App Sections</div>
+                <div style="font-size: 11.5px; color: var(--text-muted); line-height: 1.4;">Cycle sections: Dashboard ➔ View ➔ Appstore</div>
+              </div>
+              <div style="display: flex; gap: 4px; align-self: flex-end;">
+                <kbd style="background: var(--glass-bg, #e2e8f0); color: var(--text-main, #1e293b); padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 11px; font-weight: bold; border: 1px solid var(--glass-border, rgba(0,0,0,0.1));">Shift</kbd>
+                <kbd style="background: var(--glass-bg, #e2e8f0); color: var(--text-main, #1e293b); padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 11px; font-weight: bold; border: 1px solid var(--glass-border, rgba(0,0,0,0.1));">Tab</kbd>
+              </div>
+            </div>
+
+            <!-- Cell 2: New Browser Tab (Common) -->
+            <div style="background: var(--glass-bg, rgba(255,255,255,0.4)); border: 1px solid var(--glass-border, rgba(0,0,0,0.08)); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.02);">
+              <div>
+                <div style="font-weight: 700; font-size: 13.5px; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+                  <span>New Browser Tab</span>
+                  <span style="font-size: 10px; padding: 1px 5px; background: rgba(99,102,241,0.12); color: var(--primary); border-radius: 10px; font-weight: 700;">Common</span>
+                </div>
+                <div style="font-size: 11.5px; color: var(--text-muted); line-height: 1.4;">Launch the Web View panel and spawn a new browser tab</div>
+              </div>
+              <div style="display: flex; gap: 4px; align-self: flex-end;">
+                <kbd style="background: var(--glass-bg, #e2e8f0); color: var(--text-main, #1e293b); padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 11px; font-weight: bold; border: 1px solid var(--glass-border, rgba(0,0,0,0.1));">Ctrl</kbd>
+                <kbd style="background: var(--glass-bg, #e2e8f0); color: var(--text-main, #1e293b); padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 11px; font-weight: bold; border: 1px solid var(--glass-border, rgba(0,0,0,0.1));">N</kbd>
+              </div>
+            </div>
+
+            <!-- Cell 3: Refresh OneView App -->
+            <div style="background: var(--glass-bg, rgba(255,255,255,0.4)); border: 1px solid var(--glass-border, rgba(0,0,0,0.08)); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.02);">
+              <div>
+                <div style="font-weight: 700; font-size: 13.5px; margin-bottom: 4px;">Refresh OneView App</div>
+                <div style="font-size: 11.5px; color: var(--text-muted); line-height: 1.4;">Completely reload the host application window</div>
+              </div>
+              <div style="display: flex; gap: 4px; align-self: flex-end;">
+                <kbd style="background: var(--glass-bg, #e2e8f0); color: var(--text-main, #1e293b); padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 11px; font-weight: bold; border: 1px solid var(--glass-border, rgba(0,0,0,0.1));">Ctrl</kbd>
+                <kbd style="background: var(--glass-bg, #e2e8f0); color: var(--text-main, #1e293b); padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 11px; font-weight: bold; border: 1px solid var(--glass-border, rgba(0,0,0,0.1));">Shift</kbd>
+                <kbd style="background: var(--glass-bg, #e2e8f0); color: var(--text-main, #1e293b); padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 11px; font-weight: bold; border: 1px solid var(--glass-border, rgba(0,0,0,0.1));">R</kbd>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Tab 2: Browser Tab Shortcuts -->
+          <div id="shortcuts-tab-browser" class="hidden" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; width: 100%;">
+            
+            <!-- Cell 1: Traverse Browser Tabs -->
+            <div style="background: var(--glass-bg, rgba(255,255,255,0.4)); border: 1px solid var(--glass-border, rgba(0,0,0,0.08)); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.02);">
+              <div>
+                <div style="font-weight: 700; font-size: 13.5px; margin-bottom: 4px;">Traverse Browser Tabs</div>
+                <div style="font-size: 11.5px; color: var(--text-muted); line-height: 1.4;">Cycle forward/backward through open page tabs</div>
+              </div>
+              <div style="display: flex; gap: 4px; align-self: flex-end;">
+                <kbd style="background: var(--glass-bg, #e2e8f0); color: var(--text-main, #1e293b); padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 11px; font-weight: bold; border: 1px solid var(--glass-border, rgba(0,0,0,0.1));">Ctrl</kbd>
+                <kbd style="background: var(--glass-bg, #e2e8f0); color: var(--text-main, #1e293b); padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 11px; font-weight: bold; border: 1px solid var(--glass-border, rgba(0,0,0,0.1));">Tab</kbd>
+              </div>
+            </div>
+
+            <!-- Cell 2: New Browser Tab (Common) -->
+            <div style="background: var(--glass-bg, rgba(255,255,255,0.4)); border: 1px solid var(--glass-border, rgba(0,0,0,0.08)); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.02);">
+              <div>
+                <div style="font-weight: 700; font-size: 13.5px; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+                  <span>New Browser Tab</span>
+                  <span style="font-size: 10px; padding: 1px 5px; background: rgba(99,102,241,0.12); color: var(--primary); border-radius: 10px; font-weight: 700;">Common</span>
+                </div>
+                <div style="font-size: 11.5px; color: var(--text-muted); line-height: 1.4;">Launch the Web View panel and spawn a new browser tab</div>
+              </div>
+              <div style="display: flex; gap: 4px; align-self: flex-end;">
+                <kbd style="background: var(--glass-bg, #e2e8f0); color: var(--text-main, #1e293b); padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 11px; font-weight: bold; border: 1px solid var(--glass-border, rgba(0,0,0,0.1));">Ctrl</kbd>
+                <kbd style="background: var(--glass-bg, #e2e8f0); color: var(--text-main, #1e293b); padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 11px; font-weight: bold; border: 1px solid var(--glass-border, rgba(0,0,0,0.1));">N</kbd>
+              </div>
+            </div>
+
+            <!-- Cell 3: Refresh Active Tab -->
+            <div style="background: var(--glass-bg, rgba(255,255,255,0.4)); border: 1px solid var(--glass-border, rgba(0,0,0,0.08)); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.02);">
+              <div>
+                <div style="font-weight: 700; font-size: 13.5px; margin-bottom: 4px;">Refresh Active Tab</div>
+                <div style="font-size: 11.5px; color: var(--text-muted); line-height: 1.4;">Reload the webpage open in the active tab</div>
+              </div>
+              <div style="display: flex; gap: 4px; align-self: flex-end;">
+                <kbd style="background: var(--glass-bg, #e2e8f0); color: var(--text-main, #1e293b); padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 11px; font-weight: bold; border: 1px solid var(--glass-border, rgba(0,0,0,0.1));">Ctrl</kbd>
+                <kbd style="background: var(--glass-bg, #e2e8f0); color: var(--text-main, #1e293b); padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 11px; font-weight: bold; border: 1px solid var(--glass-border, rgba(0,0,0,0.1));">R</kbd>
+              </div>
+            </div>
+
+            <!-- Cell 4: Extensions -->
+            <div style="background: var(--glass-bg, rgba(255,255,255,0.4)); border: 1px solid var(--glass-border, rgba(0,0,0,0.08)); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.02);">
+              <div>
+                <div style="font-weight: 700; font-size: 13.5px; margin-bottom: 4px;">Extensions</div>
+                <div style="font-size: 11.5px; color: var(--text-muted); line-height: 1.4;">Open extensions panel to view loaded plugins</div>
+              </div>
+              <div style="display: flex; gap: 4px; align-self: flex-end;">
+                <kbd style="background: var(--glass-bg, #e2e8f0); color: var(--text-main, #1e293b); padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 11px; font-weight: bold; border: 1px solid var(--glass-border, rgba(0,0,0,0.1));">Ctrl</kbd>
+                <kbd style="background: var(--glass-bg, #e2e8f0); color: var(--text-main, #1e293b); padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 11px; font-weight: bold; border: 1px solid var(--glass-border, rgba(0,0,0,0.1));">E</kbd>
+              </div>
+            </div>
+
+            <!-- Cell 5: Downloads -->
+            <div style="background: var(--glass-bg, rgba(255,255,255,0.4)); border: 1px solid var(--glass-border, rgba(0,0,0,0.08)); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.02);">
+              <div>
+                <div style="font-weight: 700; font-size: 13.5px; margin-bottom: 4px;">Downloads</div>
+                <div style="font-size: 11.5px; color: var(--text-muted); line-height: 1.4;">Open browser downloads manager panel</div>
+              </div>
+              <div style="display: flex; gap: 4px; align-self: flex-end;">
+                <kbd style="background: var(--glass-bg, #e2e8f0); color: var(--text-main, #1e293b); padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 11px; font-weight: bold; border: 1px solid var(--glass-border, rgba(0,0,0,0.1));">Ctrl</kbd>
+                <kbd style="background: var(--glass-bg, #e2e8f0); color: var(--text-main, #1e293b); padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 11px; font-weight: bold; border: 1px solid var(--glass-border, rgba(0,0,0,0.1));">Shift</kbd>
+                <kbd style="background: var(--glass-bg, #e2e8f0); color: var(--text-main, #1e293b); padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 11px; font-weight: bold; border: 1px solid var(--glass-border, rgba(0,0,0,0.1));">D</kbd>
+              </div>
+            </div>
+
+            <!-- Cell 6: History -->
+            <div style="background: var(--glass-bg, rgba(255,255,255,0.4)); border: 1px solid var(--glass-border, rgba(0,0,0,0.08)); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.02);">
+              <div>
+                <div style="font-weight: 700; font-size: 13.5px; margin-bottom: 4px;">History</div>
+                <div style="font-size: 11.5px; color: var(--text-muted); line-height: 1.4;">Open browser page browsing history pane</div>
+              </div>
+              <div style="display: flex; gap: 4px; align-self: flex-end;">
+                <kbd style="background: var(--glass-bg, #e2e8f0); color: var(--text-main, #1e293b); padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 11px; font-weight: bold; border: 1px solid var(--glass-border, rgba(0,0,0,0.1));">Ctrl</kbd>
+                <kbd style="background: var(--glass-bg, #e2e8f0); color: var(--text-main, #1e293b); padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 11px; font-weight: bold; border: 1px solid var(--glass-border, rgba(0,0,0,0.1));">H</kbd>
+              </div>
+            </div>
+
+          </div>
+        </div>
+        <div class="modal-footer" style="padding: 16px 0 0 0; display: flex; justify-content: flex-end;">
+          <button id="shortcuts-guide-ok-btn" class="modal-btn modal-btn-primary" style="min-width: 100px; border-radius: 10px;">Got it</button>
         </div>
       </div>
     </div>

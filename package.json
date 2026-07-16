@@ -3,6 +3,6 @@
   "version": "1.2.7",
   "description": "OneView Suite compile & package scripts",
   "scripts": {
-    "build:all": "npm run vite:build --prefix frontend && .zig-compiler\\zig-x86_64-windows-0.16.0\\zig-x86_64-windows-0.16.0\\zig.exe build -Doptimize=ReleaseFast && \"C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe\" oneview.iss"
+    "build:all": "npx rimraf ui && npm run vite:build --prefix frontend && .zig-compiler\\zig-x86_64-windows-0.16.0\\zig-x86_64-windows-0.16.0\\zig.exe build -Doptimize=ReleaseFast && \"C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe\" oneview.iss"
   }
 }

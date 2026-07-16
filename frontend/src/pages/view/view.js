@@ -195,11 +195,11 @@ const RESOURCE_SERVICE_ORIGIN = (() => {
   }
 })();
 const CONTENTGEN_ICON_LIGHT = new URL(
-  "../../assets/contentgen.png",
+  "../../assets/contentgen.webp",
   import.meta.url,
 ).href;
 const CONTENTGEN_ICON_DARK = new URL(
-  "../../assets/contentgen-dark.png",
+  "../../assets/contentgen-dark.webp",
   import.meta.url,
 ).href;
 

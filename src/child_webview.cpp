@@ -229,6 +229,7 @@ static void RegisterChildClass() {
     wc.hInstance = GetModuleHandle(NULL);
     wc.lpszClassName = "ChildWebViewClass";
     wc.hbrBackground = NULL;
+    wc.hIcon = LoadIconA(GetModuleHandle(NULL), "IDI_ICON1");
     RegisterClassA(&wc);
     registered = true;
 }
@@ -1820,6 +1821,7 @@ extern "C" {
         wc.lpszClassName = "DetachedWebViewClass";
         wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
         wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+        wc.hIcon = LoadIconA(GetModuleHandle(NULL), "IDI_ICON1");
         RegisterClassA(&wc);
         registered = true;
     }

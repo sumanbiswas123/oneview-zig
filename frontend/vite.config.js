@@ -51,7 +51,28 @@ module.exports = defineConfig({
     viteStaticCopy({
       targets: [
         {
-          src: "assets/**/*",
+          src: [
+            "assets/**/*",
+            // Fonts — handled by Vite via relative CSS urls
+            "!assets/fonts",
+            "!assets/fonts/**",
+            // Orphaned / dev-only files — not referenced anywhere
+            "!assets/ov-icon-dev.ico",
+            "!assets/ov-icon-dev.webp",
+            "!assets/ov-icon_old.webp",
+            "!assets/hogarth-logo.webp",
+            "!assets/home-button-1.webp",
+            "!assets/home-button-2.webp",
+            // Images imported via ES module in tickets.js — Vite hashes these
+            "!assets/jira-icon.webp",
+            "!assets/veeva-binder-icon.webp",
+            "!assets/veeva-icon.webp",
+            // Images referenced via new URL() in dashboard.js / view.js — Vite hashes these
+            "!assets/contentgen.webp",
+            "!assets/contentgen-dark.webp",
+            // Background referenced via relative URL in dev-project.css — Vite hashes it
+            "!assets/background.webp",
+          ],
           dest: "assets",
         },
         {

@@ -100,8 +100,8 @@ let manualUpdateCheckContext = {
   pending: false,
   priorDownloadedVersion: "",
 };
-const CONTENTGEN_ICON_LIGHT = new URL("../../assets/contentgen.png", import.meta.url).href;
-const CONTENTGEN_ICON_DARK = new URL("../../assets/contentgen-dark.png", import.meta.url).href;
+const CONTENTGEN_ICON_LIGHT = new URL("../../assets/contentgen.webp", import.meta.url).href;
+const CONTENTGEN_ICON_DARK = new URL("../../assets/contentgen-dark.webp", import.meta.url).href;
 
 document.title = APP_DISPLAY_NAME;
 

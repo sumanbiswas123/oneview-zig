@@ -1,21 +1,21 @@
 import { escapeHtml, ticketTypeToMeta } from "./utils.js";
 import { PARTITIONS } from "./app-runtime.js";
 
-import jiraIcon from "../assets/jira-icon.png";
+import jiraIcon from "../assets/jira-icon.webp";
 
 import bugIcon from "../assets/task-icons/bug.png";
 import edaIcon from "../assets/task-icons/eda.png";
 import emailIcon from "../assets/task-icons/email.png";
-import ocIcon from "../assets/task-icons/oc.png";
+import ocIcon from "../assets/task-icons/oc.webp";
 import printIcon from "../assets/task-icons/print.png";
 import videoIcon from "../assets/task-icons/video.png";
-import webIcon from "../assets/task-icons/web.png";
-import timeIcon from "../assets/task-icons/track.png";
+import webIcon from "../assets/task-icons/web.webp";
+import timeIcon from "../assets/task-icons/track.webp";
 import defaultIcon from "../assets/task-icons/default.png";
 
-import veevaIcon from "../assets/veeva-icon.png";
+import veevaIcon from "../assets/veeva-icon.webp";
 
-import veevaBinderIcon from "../assets/veeva-binder-icon.png";
+import veevaBinderIcon from "../assets/veeva-binder-icon.webp";
 /**
  * Ticket data and rendering functionality
  */

@@ -601,6 +601,108 @@ export function initializeProfileMenu() {
       });
     }
 
+    const shortcutsBtn = document.getElementById("shortcuts-guide-btn");
+    const shortcutsModal = document.getElementById("shortcuts-guide-modal");
+    const shortcutsCloseBtn = document.getElementById("shortcuts-guide-close-btn");
+    const shortcutsOkBtn = document.getElementById("shortcuts-guide-ok-btn");
+
+    if (shortcutsBtn) {
+      console.log("[OneView] shortcutsBtn found, binding click event");
+      shortcutsBtn.addEventListener("click", () => {
+        console.log("[OneView] Shortcuts button clicked");
+        closeProfileMenu();
+        
+        const modal = document.getElementById("shortcuts-guide-modal");
+        console.log("[OneView] Shortcuts modal element in DOM:", modal);
+        
+        if (modal) {
+          openOverlayModal(() => {
+            modal.classList.remove("hidden");
+            modal.setAttribute("aria-hidden", "false");
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() => modal.classList.add("open")),
+            );
+            console.log("[OneView] Shortcuts modal classList now:", modal.classList);
+          });
+        }
+      });
+    } else {
+      console.warn("[OneView] shortcutsBtn element not found in DOM");
+    }
+
+    const closeShortcutsModal = () => {
+      const modal = document.getElementById("shortcuts-guide-modal");
+      if (modal && !modal.classList.contains("hidden")) {
+        closeOverlayModal(() => {
+          modal.classList.remove("open");
+          modal.setAttribute("aria-hidden", "true");
+          
+          const onEnd = () => {
+            modal.classList.add("hidden");
+            modal.removeEventListener("transitionend", onEnd);
+          };
+          modal.addEventListener("transitionend", onEnd);
+          
+          setTimeout(() => {
+            if (!modal.classList.contains("open")) {
+              modal.classList.add("hidden");
+            }
+          }, 350);
+        });
+      }
+    };
+
+    document.getElementById("shortcuts-guide-close-btn")?.addEventListener("click", closeShortcutsModal);
+    document.getElementById("shortcuts-guide-ok-btn")?.addEventListener("click", closeShortcutsModal);
+    document.getElementById("shortcuts-guide-modal")?.addEventListener("click", (event) => {
+      const modal = document.getElementById("shortcuts-guide-modal");
+      if (event.target === modal) {
+        closeShortcutsModal();
+      }
+    });
+
+    // Tab Toggling logic
+    const tabGlobalBtn = document.getElementById("tab-global-btn");
+    const tabBrowserBtn = document.getElementById("tab-browser-btn");
+    const tabGlobalContent = document.getElementById("shortcuts-tab-global");
+    const tabBrowserContent = document.getElementById("shortcuts-tab-browser");
+
+    tabGlobalBtn?.addEventListener("click", () => {
+      tabGlobalBtn.style.background = "var(--primary)";
+      tabGlobalBtn.style.color = "white";
+      tabGlobalBtn.style.border = "none";
+
+      if (tabBrowserBtn) {
+        tabBrowserBtn.style.background = "transparent";
+        tabBrowserBtn.style.color = "var(--text-muted)";
+        tabBrowserBtn.style.border = "1px solid transparent";
+      }
+
+      tabGlobalContent?.classList.remove("hidden");
+      if (tabGlobalContent) {
+        tabGlobalContent.style.display = "grid";
+      }
+      tabBrowserContent?.classList.add("hidden");
+    });
+
+    tabBrowserBtn?.addEventListener("click", () => {
+      tabBrowserBtn.style.background = "var(--primary)";
+      tabBrowserBtn.style.color = "white";
+      tabBrowserBtn.style.border = "none";
+
+      if (tabGlobalBtn) {
+        tabGlobalBtn.style.background = "transparent";
+        tabGlobalBtn.style.color = "var(--text-muted)";
+        tabGlobalBtn.style.border = "1px solid transparent";
+      }
+
+      tabBrowserContent?.classList.remove("hidden");
+      if (tabBrowserContent) {
+        tabBrowserContent.style.display = "grid";
+      }
+      tabGlobalContent?.classList.add("hidden");
+    });
+
     if (logoutBtn) {
       logoutBtn.addEventListener("click", async () => {
         closeProfileMenu();
