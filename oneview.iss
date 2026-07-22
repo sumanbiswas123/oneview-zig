@@ -43,13 +43,30 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 ; Capability registration
 Root: HKCU; Subkey: "Software\OneView\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "OneView"
 Root: HKCU; Subkey: "Software\OneView\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "OneView Browser and PDF Viewer"
-Root: HKCU; Subkey: "Software\OneView\Capabilities\URLAssociations"; ValueType: string; ValueName: "http"; ValueData: "OneView.Assoc"
-Root: HKCU; Subkey: "Software\OneView\Capabilities\URLAssociations"; ValueType: string; ValueName: "https"; ValueData: "OneView.Assoc"
-Root: HKCU; Subkey: "Software\OneView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".pdf"; ValueData: "OneView.Assoc"
-Root: HKCU; Subkey: "Software\OneView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".html"; ValueData: "OneView.Assoc"
-Root: HKCU; Subkey: "Software\Classes\OneView.Assoc"; ValueType: string; ValueName: ""; ValueData: "OneView Document"
-Root: HKCU; Subkey: "Software\Classes\OneView.Assoc\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\oneview.exe"" ""%1"""
+Root: HKCU; Subkey: "Software\OneView\Capabilities\URLAssociations"; ValueType: string; ValueName: "http"; ValueData: "OneViewHTML"
+Root: HKCU; Subkey: "Software\OneView\Capabilities\URLAssociations"; ValueType: string; ValueName: "https"; ValueData: "OneViewHTML"
+Root: HKCU; Subkey: "Software\OneView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".pdf"; ValueData: "OneViewHTML"
+Root: HKCU; Subkey: "Software\OneView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".html"; ValueData: "OneViewHTML"
+Root: HKCU; Subkey: "Software\OneView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".htm"; ValueData: "OneViewHTML"
+
+; Classes ProgID registration
+Root: HKCU; Subkey: "Software\Classes\OneViewHTML"; ValueType: string; ValueName: ""; ValueData: "OneView Document"
+Root: HKCU; Subkey: "Software\Classes\OneViewHTML"; ValueType: string; ValueName: "AppUserModelID"; ValueData: "OneView"
+Root: HKCU; Subkey: "Software\Classes\OneViewHTML\Application"; ValueType: string; ValueName: "ApplicationName"; ValueData: "OneView"
+Root: HKCU; Subkey: "Software\Classes\OneViewHTML\Application"; ValueType: string; ValueName: "ApplicationIcon"; ValueData: """{app}\oneview.exe"",0"
+Root: HKCU; Subkey: "Software\Classes\OneViewHTML\Application"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "OneView Browser and PDF Viewer"
+Root: HKCU; Subkey: "Software\Classes\OneViewHTML\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\oneview.exe"",0"
+Root: HKCU; Subkey: "Software\Classes\OneViewHTML\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\oneview.exe"" ""%1"""
+
+; Registered Applications mapping
 Root: HKCU; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "OneView"; ValueData: "Software\OneView\Capabilities"
+Root: HKLM; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "OneView"; ValueData: "Software\OneView\Capabilities"; Flags: noerror uninsdeletevalue
+Root: HKLM; Subkey: "Software\OneView\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "OneView"; Flags: noerror
+Root: HKLM; Subkey: "Software\OneView\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "OneView Browser and PDF Viewer"; Flags: noerror
+Root: HKLM; Subkey: "Software\OneView\Capabilities\URLAssociations"; ValueType: string; ValueName: "http"; ValueData: "OneViewHTML"; Flags: noerror
+Root: HKLM; Subkey: "Software\OneView\Capabilities\URLAssociations"; ValueType: string; ValueName: "https"; ValueData: "OneViewHTML"; Flags: noerror
+Root: HKLM; Subkey: "Software\OneView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".pdf"; ValueData: "OneViewHTML"; Flags: noerror
+Root: HKLM; Subkey: "Software\OneView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".html"; ValueData: "OneViewHTML"; Flags: noerror
 
 [Run]
 ; Always launch the app when finished

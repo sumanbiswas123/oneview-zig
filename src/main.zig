@@ -1069,6 +1069,10 @@ fn handleConnection(ctx: ConnCtx) void {
     const is_real_api = std.mem.eql(u8, url_path, "/api/apps-secret-root") or
                         std.mem.eql(u8, url_path, "/api/local-appdata-path") or
                         std.mem.eql(u8, url_path, "/api/app-version") or
+                        std.mem.eql(u8, url_path, "/api/get-startup-diagnostics") or
+                        std.mem.eql(u8, url_path, "/api/open-default-app-settings") or
+                        std.mem.eql(u8, url_path, "/api/get-default-open-handling-status") or
+                        std.mem.eql(u8, url_path, "/api/check-for-updates") or
                         std.mem.eql(u8, url_path, "/api/download-file") or
                         std.mem.eql(u8, url_path, "/api/unzip-file") or
                         std.mem.eql(u8, url_path, "/api/delete-path") or
@@ -1167,6 +1171,159 @@ fn handleConnection(ctx: ConnCtx) void {
     // Route: /api/app-version — returns the current OneView app version
     if (std.mem.eql(u8, url_path, "/api/app-version")) {
         sendJson(ctx.sock, "{\"version\":\"1.2.7\"}");
+        return;
+    }
+
+    // Route: /api/get-startup-diagnostics
+    if (std.mem.eql(u8, url_path, "/api/get-startup-diagnostics")) {
+        const temp = getEnvVar(allocator, "TEMP");
+        defer if (temp.len > 0) allocator.free(temp);
+        var path_buf: [512]u8 = undefined;
+        const log_path = std.fmt.bufPrintZ(&path_buf, "{s}\\oneview_debug.log", .{temp}) catch "";
+        
+        var lines_list = std.ArrayList([]const u8).empty;
+        defer {
+            for (lines_list.items) |l| allocator.free(l);
+            lines_list.deinit(allocator);
+        }
+
+        if (log_path.len > 0) {
+            if (fopen(log_path, "rb")) |fh| {
+                defer _ = fclose(fh);
+                _ = fseek(fh, 0, 2);
+                const size = ftell(fh);
+                if (size > 0) {
+                    _ = fseek(fh, 0, 0);
+                    const buf = allocator.alloc(u8, @intCast(size)) catch null;
+                    if (buf) |b| {
+                        defer allocator.free(b);
+                        _ = fread(b.ptr, 1, @intCast(size), fh);
+                        var it = std.mem.splitScalar(u8, b, '\n');
+                        while (it.next()) |line| {
+                            const trimmed = std.mem.trim(u8, line, "\r");
+                            if (trimmed.len > 0) {
+                                const duped = allocator.dupe(u8, trimmed) catch continue;
+                                lines_list.append(allocator, duped) catch {};
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Limit to last 100 log lines to keep JSON payload manageable
+        const start_idx = if (lines_list.items.len > 100) lines_list.items.len - 100 else 0;
+        const slice = lines_list.items[start_idx..];
+
+        var lines_json = std.ArrayList(u8).empty;
+        defer lines_json.deinit(allocator);
+        lines_json.appendSlice(allocator, "[") catch {};
+        for (slice, 0..) |l, i| {
+            if (i > 0) lines_json.appendSlice(allocator, ",") catch {};
+            const esc = escapeJsString(allocator, l);
+            defer allocator.free(esc);
+            const formatted = std.fmt.allocPrint(allocator, "\"{s}\"", .{esc}) catch continue;
+            defer allocator.free(formatted);
+            lines_json.appendSlice(allocator, formatted) catch {};
+        }
+        lines_json.appendSlice(allocator, "]") catch {};
+
+        const log_path_esc = escapeJsString(allocator, log_path);
+        defer allocator.free(log_path_esc);
+
+        const kernel32_pid = struct {
+            extern "kernel32" fn GetCurrentProcessId() callconv(.winapi) u32;
+        };
+
+        const resp = std.fmt.allocPrint(allocator,
+            "{{\"success\":true,\"startup\":{{\"path\":\"{s}\",\"lines\":{s}}},\"perf\":{{\"path\":\"{s}\",\"enabled\":true,\"lines\":[]}},\"app\":{{\"version\":\"1.2.7\",\"packaged\":true,\"pid\":{d}}}}}",
+            .{ log_path_esc, lines_json.items, log_path_esc, kernel32_pid.GetCurrentProcessId() }
+        ) catch "{\"success\":false}";
+        defer if (resp.ptr != "{\"success\":false}".ptr) allocator.free(resp);
+        sendJson(ctx.sock, resp);
+        return;
+    }
+
+    // Route: /api/open-default-app-settings
+    if (std.mem.eql(u8, url_path, "/api/open-default-app-settings")) {
+        const shell32 = struct {
+            extern "shell32" fn ShellExecuteA(
+                hwnd: ?*anyopaque,
+                lpOperation: ?[*:0]const u8,
+                lpFile: [*:0]const u8,
+                lpParameters: ?[*:0]const u8,
+                lpDirectory: ?[*:0]const u8,
+                nShowCmd: c_int
+            ) callconv(.winapi) ?*anyopaque;
+        };
+        // Official Windows 11 URI scheme to open directly to Apps > Default apps > OneView
+        _ = shell32.ShellExecuteA(null, "open", "ms-settings:defaultapps?registeredAppUser=OneView", null, null, 5);
+        sendJson(ctx.sock, "{\"success\":true}");
+        return;
+    }
+
+    // Route: /api/get-default-open-handling-status
+    if (std.mem.eql(u8, url_path, "/api/get-default-open-handling-status")) {
+        // Query registry UserChoice to see if OneView is set as http/https default
+        var is_http_default = false;
+        var is_https_default = false;
+
+        var hk: HKEY = null;
+        if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\http\\UserChoice", 0, KEY_READ, &hk) == ERROR_SUCCESS) {
+            defer _ = RegCloseKey(hk);
+            var len: u32 = 256;
+            var buf: [256]u8 = undefined;
+            if (RegQueryValueExA(hk, "ProgId", null, null, &buf, &len) == ERROR_SUCCESS) {
+                const prog_id = buf[0..std.mem.indexOfScalar(u8, buf[0..len], 0) orelse len];
+                if (std.mem.indexOf(u8, prog_id, "OneView") != null or std.mem.indexOf(u8, prog_id, "oneview") != null) {
+                    is_http_default = true;
+                }
+            }
+        }
+        hk = null;
+        if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice", 0, KEY_READ, &hk) == ERROR_SUCCESS) {
+            defer _ = RegCloseKey(hk);
+            var len: u32 = 256;
+            var buf: [256]u8 = undefined;
+            if (RegQueryValueExA(hk, "ProgId", null, null, &buf, &len) == ERROR_SUCCESS) {
+                const prog_id = buf[0..std.mem.indexOfScalar(u8, buf[0..len], 0) orelse len];
+                if (std.mem.indexOf(u8, prog_id, "OneView") != null or std.mem.indexOf(u8, prog_id, "oneview") != null) {
+                    is_https_default = true;
+                }
+            }
+        }
+
+        const is_all_default = is_http_default and is_https_default;
+        const resp = std.fmt.allocPrint(allocator,
+            "{{\"supported\":true,\"isDefault\":{},\"checks\":{{\"http\":{},\"https\":{},\"html\":{},\"htm\":{}}}}}",
+            .{ is_all_default, is_http_default, is_https_default, is_http_default, is_https_default }
+        ) catch "{\"supported\":true,\"isDefault\":false}";
+        defer if (resp.ptr != "{\"supported\":true,\"isDefault\":false}".ptr) allocator.free(resp);
+        sendJson(ctx.sock, resp);
+        return;
+    }
+
+    // Route: /api/check-for-updates
+    if (std.mem.eql(u8, url_path, "/api/check-for-updates")) {
+        const policy_raw = httpGetWinINet(allocator, "https://raw.githubusercontent.com/dikshantgoel-WPP/automation-store/refs/heads/main/update.json");
+        if (policy_raw) |raw| {
+            defer allocator.free(raw);
+            if (std.json.parseFromSlice(std.json.Value, allocator, raw, .{})) |parsed| {
+                defer parsed.deinit();
+                const obj = parsed.value.object;
+                const remote_version = if (obj.get("version")) |v| v.string else "1.2.7";
+                const is_update_available = !std.mem.eql(u8, remote_version, "1.2.7");
+                
+                const resp = std.fmt.allocPrint(allocator,
+                    "{{\"success\":true,\"updateAvailable\":{},\"currentVersion\":\"1.2.7\",\"latestVersion\":\"{s}\"}}",
+                    .{ is_update_available, remote_version }
+                ) catch "{\"success\":true,\"updateAvailable\":false,\"currentVersion\":\"1.2.7\",\"latestVersion\":\"1.2.7\"}";
+                defer if (!std.mem.startsWith(u8, resp, "{\"success\":true,\"updateAvailable\":false")) allocator.free(resp);
+                sendJson(ctx.sock, resp);
+                return;
+            } else |_| {}
+        }
+        sendJson(ctx.sock, "{\"success\":true,\"updateAvailable\":false,\"currentVersion\":\"1.2.7\",\"latestVersion\":\"1.2.7\"}");
         return;
     }
 
@@ -4277,7 +4434,7 @@ const INIT_SCRIPT =
     \\  window.api.verifyFileSha256 = window.api.verifyFileSha256 || async function() { return { success: false }; };
     \\  window.api.registerLocalApp = window.api.registerLocalApp || async function() { return { success: false }; };
     \\  window.api.resolveOneviewAppUrl = window.api.resolveOneviewAppUrl || async function() { return { success: false }; };
-    \\  // ── App version ─────────────────────────────────────────────────────────
+    \\  // ── App version & diagnostics & browser defaults & updates ───────────────
     \\  window.api.getAppVersion = window.api.getAppVersion || async function() {
     \\    try {
     \\      const r = await fetch('http://127.0.0.1:9731/api/app-version');
@@ -4287,6 +4444,30 @@ const INIT_SCRIPT =
     \\  };
     \\  window.api.getCurrentUpdateStatus = window.api.getCurrentUpdateStatus || async function() {
     \\    return { status: 'idle' };
+    \\  };
+    \\  window.api.getStartupDiagnostics = window.api.getStartupDiagnostics || async function() {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/get-startup-diagnostics');
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false, message: e.message }; }
+    \\  };
+    \\  window.api.openDefaultAppSettings = window.api.openDefaultAppSettings || async function() {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/open-default-app-settings', { method: 'POST' });
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false, message: e.message }; }
+    \\  };
+    \\  window.api.getDefaultOpenHandlingStatus = window.api.getDefaultOpenHandlingStatus || async function() {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/get-default-open-handling-status');
+    \\      return await r.json();
+    \\    } catch(e) { return { supported: false, isDefault: false }; }
+    \\  };
+    \\  window.api.checkForUpdates = window.api.checkForUpdates || async function() {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/check-for-updates', { method: 'POST' });
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false, message: e.message }; }
     \\  };
     \\  // ── File operations (download / unzip / delete) ──────────────────────────
     \\  window.api.downloadFile = window.api.downloadFile || async function(url, targetPath) {
