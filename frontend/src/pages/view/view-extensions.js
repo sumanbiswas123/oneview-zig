@@ -852,7 +852,13 @@ export function createViewExtensionsManager({
                 ${entry.version ? `<span>v${escapeHtml(entry.version)}</span>` : ""}
                 ${entry.id ? `<span>${escapeHtml(entry.id)}</span>` : ""}
               </div>
-              ${constants.IS_DEV_APP_BUILD ? `<div class="extension-path">${escapedPath}</div>` : ""}
+              ${(function() {
+                try {
+                  const role = String(localStorage.getItem("userRole") || "production").toLowerCase();
+                  const mode = String(localStorage.getItem("oneview_env_mode") || "prod").toLowerCase();
+                  return (role === "dev" && mode === "dev") ? `<div class="extension-path">${escapedPath}</div>` : "";
+                } catch (_e) { return ""; }
+              })()}
               ${entry.loadError ? `<div class="extension-error">${escapeHtml(entry.loadError)}</div>` : ""}
             </div>
             <div class="extension-actions">
@@ -877,11 +883,13 @@ export function createViewExtensionsManager({
               <button type="button" class="extension-action-btn" data-action="toggle" data-path="${escapedPath}">
                 ${entry.enabled === false ? "Enable" : "Disable"}
               </button>
-              ${
-                constants.IS_DEV_APP_BUILD
-                  ? `<button type="button" class="extension-action-btn destructive" data-action="remove" data-path="${escapedPath}">Remove</button>`
-                  : ""
-              }
+              ${(function() {
+                try {
+                  const role = String(localStorage.getItem("userRole") || "production").toLowerCase();
+                  const mode = String(localStorage.getItem("oneview_env_mode") || "prod").toLowerCase();
+                  return (role === "dev" && mode === "dev") ? `<button type="button" class="extension-action-btn destructive" data-action="remove" data-path="${escapedPath}">Remove</button>` : "";
+                } catch (_e) { return ""; }
+              })()}
             </div>
           </div>
         `;
@@ -1041,6 +1049,18 @@ export function createViewExtensionsManager({
     if (closeBtn && closeBtn.dataset.boundClick !== "1") {
       closeBtn.dataset.boundClick = "1";
       closeBtn.addEventListener("click", closeExtensionsManagerModal);
+    }
+
+    if (addBtn) {
+      try {
+        const role = String(localStorage.getItem("userRole") || "production").toLowerCase();
+        const mode = String(localStorage.getItem("oneview_env_mode") || "prod").toLowerCase();
+        if (role !== "dev" || mode !== "dev") {
+          addBtn.style.display = "none";
+        } else {
+          addBtn.style.display = "";
+        }
+      } catch (_e) {}
     }
 
     if (addBtn && addBtn.dataset.boundClick !== "1") {

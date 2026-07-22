@@ -296,13 +296,21 @@ export function createViewSettingsManager({
         <div class="native-settings-list">
         ${state.browserExtensionsCache
           .map(
-            (entry) => `
+            (entry) => {
+              const isDevModeActive = (function() {
+                try {
+                  const role = String(localStorage.getItem("userRole") || "production").toLowerCase();
+                  const mode = String(localStorage.getItem("oneview_env_mode") || "prod").toLowerCase();
+                  return role === "dev" && mode === "dev";
+                } catch (_e) { return false; }
+              })();
+              return `
               <article class="native-settings-row">
                 <div class="native-settings-row-main">
                   <div>
                     <div class="native-settings-row-title">${escapeHtml(entry.name || "Unnamed Extension")}</div>
-                    <div class="native-settings-row-note">${escapeHtml(entry.id || entry.path || "")}</div>
-                    ${IS_DEV_APP_BUILD ? `<div class="native-settings-row-note">${escapeHtml(entry.path || "")}</div>` : ""}
+                    <div class="native-settings-row-note">${escapeHtml(entry.id || "")}</div>
+                    ${isDevModeActive ? `<div class="native-settings-row-note">${escapeHtml(entry.path || "")}</div>` : ""}
                   </div>
                   <div class="native-settings-inline-actions">
                     <button class="native-settings-action" type="button" data-native-extension-action="more" data-extension-path="${escapeHtml(entry.path || "")}">More</button>
@@ -312,11 +320,12 @@ export function createViewSettingsManager({
                       entry.enabled === false ? "Enable" : "Disable"
                     }</button>
                     <button class="native-settings-action" type="button" data-native-extension-action="reload" data-extension-path="${escapeHtml(entry.path || "")}">Reload</button>
-                    ${IS_DEV_APP_BUILD ? `<button class="native-settings-action" type="button" data-native-extension-action="remove" data-extension-path="${escapeHtml(entry.path || "")}">Remove</button>` : ""}
+                    ${isDevModeActive ? `<button class="native-settings-action" type="button" data-native-extension-action="remove" data-extension-path="${escapeHtml(entry.path || "")}">Remove</button>` : ""}
                   </div>
                 </div>
               </article>
-            `,
+            `;
+            },
           )
           .join("")}
         </div>
@@ -484,11 +493,13 @@ export function createViewSettingsManager({
       ).length;
       stickyToolbar = `
         <div class="native-settings-toolbar">
-          ${
-            IS_DEV_APP_BUILD
-              ? '<button class="native-settings-action" type="button" data-native-settings-action="load-unpacked-extension">Load unpacked extension</button>'
-              : ""
-          }
+          ${(function() {
+            try {
+              const role = String(localStorage.getItem("userRole") || "production").toLowerCase();
+              const mode = String(localStorage.getItem("oneview_env_mode") || "prod").toLowerCase();
+              return (role === "dev" && mode === "dev") ? '<button class="native-settings-action" type="button" data-native-settings-action="load-unpacked-extension">Load unpacked extension</button>' : '';
+            } catch (_e) { return ''; }
+          })()}
         </div>
       `;
       sectionBody = renderNativeSettingsExtensionsSection();

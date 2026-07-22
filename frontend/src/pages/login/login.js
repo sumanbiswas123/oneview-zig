@@ -887,38 +887,36 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
     }
 
-    if (IS_DEV_APP_BUILD) {
-      showError("Verifying access permissions...");
-      try {
-        const [devRes, qcRes] = await Promise.all([
-          fetch(DEV_ACCESS_LIST_URL).then(r => r.json()),
-          fetch(QC_ACCESS_LIST_URL).then(r => r.json())
-        ]);
-        
-        const normalizedUsername = String(username || "").trim().toLowerCase();
-        const devUser = devRes.find(u => String(u.id).trim().toLowerCase() === normalizedUsername);
-        const qcUser = qcRes.find(u => String(u.id).trim().toLowerCase() === normalizedUsername);
-        
-        if (!devUser && !qcUser) {
-          showError("Access denied. You do not have permission to access the dev application.");
-          return;
-        }
-        
-        if (devUser) {
-          localStorage.setItem("userRole", "dev");
-          localStorage.setItem("userMaster", "true");
-          localStorage.setItem("userCanChangePassword", "true");
-        } else if (qcUser) {
-          localStorage.setItem("userRole", "qc");
-          localStorage.setItem("userMaster", qcUser.master === true ? "true" : "false");
-          localStorage.setItem("userCanChangePassword", qcUser.password === true ? "true" : "false");
-        }
-        
-        if (errorEl) errorEl.classList.add("hidden");
-      } catch (err) {
-        console.error("Failed to fetch access lists", err);
-        showError("Unable to verify access permissions. Please check your network and try again.");
-        return;
+    try {
+      const [devRes, qcRes] = await Promise.all([
+        fetch(DEV_ACCESS_LIST_URL).then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch(QC_ACCESS_LIST_URL).then(r => r.ok ? r.json() : []).catch(() => [])
+      ]);
+      
+      const normalizedUsername = String(username || "").trim().toLowerCase();
+      const devUser = Array.isArray(devRes) ? devRes.find(u => String(u.id).trim().toLowerCase() === normalizedUsername) : null;
+      const qcUser = Array.isArray(qcRes) ? qcRes.find(u => String(u.id).trim().toLowerCase() === normalizedUsername) : null;
+      
+      if (devUser) {
+        localStorage.setItem("userRole", "dev");
+        localStorage.setItem("userMaster", "true");
+        localStorage.setItem("userCanChangePassword", "true");
+      } else if (qcUser) {
+        localStorage.setItem("userRole", "qc");
+        localStorage.setItem("userMaster", qcUser.master === true ? "true" : "false");
+        localStorage.setItem("userCanChangePassword", qcUser.password === true ? "true" : "false");
+      } else {
+        localStorage.setItem("userRole", "production");
+        localStorage.setItem("userMaster", "false");
+        localStorage.setItem("userCanChangePassword", "true");
+        localStorage.setItem("oneview_env_mode", "prod");
+      }
+      
+      if (errorEl) errorEl.classList.add("hidden");
+    } catch (err) {
+      console.warn("Access list check non-fatal warning", err);
+      if (!localStorage.getItem("userRole")) {
+        localStorage.setItem("userRole", "production");
       }
     }
 

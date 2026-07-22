@@ -19,9 +19,20 @@ export const APP_STORAGE_NAMESPACE = IS_PRODUCTION_APP_BUILD
   : "oneview.dev";
 export const APP_PARTITION_NAMESPACE = APP_PROTOCOL_SCHEME;
 
-export const APP_SERVICE_BASE_URL = IS_PRODUCTION_APP_BUILD
-  ? "http://10.215.56.196:8009"
-  : "http://10.215.56.196:8009";
+export const PROD_SERVICE_BASE_URL = "http://10.215.56.196:8009";
+export const DEV_SERVICE_BASE_URL = "http://10.215.56.196:8001";
+
+export function getActiveBackendUrl() {
+  try {
+    const envMode = localStorage.getItem("oneview_env_mode");
+    if (envMode === "dev") {
+      return DEV_SERVICE_BASE_URL;
+    }
+  } catch (_e) {}
+  return PROD_SERVICE_BASE_URL;
+}
+
+export const APP_SERVICE_BASE_URL = getActiveBackendUrl();
 
 export const RESOURCE_SERVICE_BASE_URL = "http://10.215.56.196:5000";
 export const EXTENSIONS_RELEASES_URL =

@@ -476,6 +476,26 @@
               <span>Startup diagnostics</span>
             </button>
             <button
+              class="profile-menu-item hidden"
+              id="switch-env-btn"
+              role="menuitem"
+            >
+              <svg
+                class="menu-icon"
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path
+                  fill="currentColor"
+                  d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 0 0 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"
+                />
+              </svg>
+              <span id="switch-env-label">Switch to Dev</span>
+            </button>
+            <button
               class="profile-menu-item"
               id="check-app-updates"
               role="menuitem"
@@ -1388,6 +1408,30 @@
           <!-- Countdown Timer -->
           <div class="connectivity-countdown">
             <span id="connectivity-countdown-timer" class="countdown-timer">15:00</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Environment Switch Confirmation Modal -->
+    <div id="env-switch-modal-overlay" class="modal-overlay hidden">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3 id="env-switch-modal-title">Switch Environment</h3>
+            <button type="button" class="modal-close-btn" id="env-switch-modal-close-btn" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <p id="env-switch-modal-message">
+              Are you sure you want to switch environment?
+            </p>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="modal-btn modal-btn-secondary" id="env-switch-modal-cancel-btn">
+              Cancel
+            </button>
+            <button type="button" class="modal-btn modal-btn-primary" id="env-switch-modal-confirm-btn">
+              Switch
+            </button>
           </div>
         </div>
       </div>

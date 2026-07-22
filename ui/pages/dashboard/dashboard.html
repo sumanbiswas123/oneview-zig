@@ -5,15 +5,15 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>OneView</title>
-    <script type="module" crossorigin src="../../assets/dashboard-C0J8EPLB.js"></script>
+    <script type="module" crossorigin src="../../assets/dashboard-CymkOswQ.js"></script>
     <link rel="modulepreload" crossorigin href="../../assets/modulepreload-polyfill-B5Qt9EMX.js">
     <link rel="modulepreload" crossorigin href="../../assets/titlebar-Dccu27MD.js">
     <link rel="modulepreload" crossorigin href="../../assets/notifications-CBkElf_0.js">
-    <link rel="modulepreload" crossorigin href="../../assets/app-env-Dw5Rxq_p.js">
-    <link rel="modulepreload" crossorigin href="../../assets/app-runtime-CuOCpSBc.js">
-    <link rel="modulepreload" crossorigin href="../../assets/webcontent-client-DJU5VCvB.js">
-    <link rel="modulepreload" crossorigin href="../../assets/utils-BB1f9hyT.js">
-    <link rel="modulepreload" crossorigin href="../../assets/app-update-notifications-DQcYLNxX.js">
+    <link rel="modulepreload" crossorigin href="../../assets/app-env-LRI4mui_.js">
+    <link rel="modulepreload" crossorigin href="../../assets/app-runtime-DdMq_Y3K.js">
+    <link rel="modulepreload" crossorigin href="../../assets/webcontent-client-BRvgxEHp.js">
+    <link rel="modulepreload" crossorigin href="../../assets/utils-BKHHhLc0.js">
+    <link rel="modulepreload" crossorigin href="../../assets/app-update-notifications-DPIp5tHc.js">
     <link rel="modulepreload" crossorigin href="../../assets/external-exe-DRsy67iY.js">
     <link rel="stylesheet" crossorigin href="../../assets/dashboard-4XdVNxDC.css">
     <link rel="stylesheet" crossorigin href="../../assets/titlebar-DDvDEpZH.css">
@@ -481,6 +481,26 @@
                 />
               </svg>
               <span>Startup diagnostics</span>
+            </button>
+            <button
+              class="profile-menu-item hidden"
+              id="switch-env-btn"
+              role="menuitem"
+            >
+              <svg
+                class="menu-icon"
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path
+                  fill="currentColor"
+                  d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 0 0 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"
+                />
+              </svg>
+              <span id="switch-env-label">Switch to Dev</span>
             </button>
             <button
               class="profile-menu-item"
@@ -1395,6 +1415,30 @@
           <!-- Countdown Timer -->
           <div class="connectivity-countdown">
             <span id="connectivity-countdown-timer" class="countdown-timer">15:00</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Environment Switch Confirmation Modal -->
+    <div id="env-switch-modal-overlay" class="modal-overlay hidden">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3 id="env-switch-modal-title">Switch Environment</h3>
+            <button type="button" class="modal-close-btn" id="env-switch-modal-close-btn" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <p id="env-switch-modal-message">
+              Are you sure you want to switch environment?
+            </p>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="modal-btn modal-btn-secondary" id="env-switch-modal-cancel-btn">
+              Cancel
+            </button>
+            <button type="button" class="modal-btn modal-btn-primary" id="env-switch-modal-confirm-btn">
+              Switch
+            </button>
           </div>
         </div>
       </div>

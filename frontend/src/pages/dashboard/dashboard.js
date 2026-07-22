@@ -1314,7 +1314,11 @@ function applyStartupDiagnosticsAvailability() {
   const startupDiagnosticsModal = document.getElementById("startup-diagnostics-modal");
   const rollbackBuildsModal = document.getElementById("rollback-builds-modal");
 
-  if (IS_DEV_APP_BUILD) {
+  const userRole = String(localStorage.getItem("userRole") || "production").toLowerCase();
+  const envMode = String(localStorage.getItem("oneview_env_mode") || "prod").toLowerCase();
+
+  // Startup Diagnostics is only available when user is dev AND dev mode is active
+  if (userRole === "dev" && envMode === "dev") {
     startupDiagnosticsBtn?.classList.remove("hidden");
     return;
   }

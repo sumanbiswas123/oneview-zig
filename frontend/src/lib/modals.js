@@ -592,14 +592,151 @@ export function initializeProfileMenu() {
       });
     }
 
-    if (checkUpdatesBtn) {
-      checkUpdatesBtn.addEventListener("click", () => {
-        closeProfileMenu();
-        if (typeof window.triggerManualSystemUpdateCheck === "function") {
-          void window.triggerManualSystemUpdateCheck();
+    // Environment Switch (Dev/QC Users)
+    const switchEnvBtn = document.getElementById("switch-env-btn");
+    const switchEnvLabel = document.getElementById("switch-env-label");
+    const envSwitchModalOverlay = document.getElementById("env-switch-modal-overlay");
+    const envSwitchModalCloseBtn = document.getElementById("env-switch-modal-close-btn");
+    const envSwitchModalCancelBtn = document.getElementById("env-switch-modal-cancel-btn");
+    const envSwitchModalConfirmBtn = document.getElementById("env-switch-modal-confirm-btn");
+    const envSwitchModalMessage = document.getElementById("env-switch-modal-message");
+
+    const userRole = String(localStorage.getItem("userRole") || "production").toLowerCase();
+    const currentMode = String(localStorage.getItem("oneview_env_mode") || "prod").toLowerCase();
+
+    if (userRole === "dev" || userRole === "qc") {
+      if (switchEnvBtn) {
+        switchEnvBtn.classList.remove("hidden");
+        if (switchEnvLabel) {
+          switchEnvLabel.textContent = currentMode === "dev" ? "Switch to Production" : "Switch to Dev";
         }
+      }
+    }
+
+    async function openEnvSwitchModal() {
+      if (userRole !== "dev" && userRole !== "qc") return;
+      const targetEnv = currentMode === "dev" ? "Production" : "Development";
+      const targetPort = currentMode === "dev" ? "8009" : "8001";
+      const overlayEl = document.getElementById("env-switch-modal-overlay") || envSwitchModalOverlay;
+      const titleEl = document.getElementById("env-switch-modal-title");
+      const msgEl = document.getElementById("env-switch-modal-message") || envSwitchModalMessage;
+      const confirmBtnEl = document.getElementById("env-switch-modal-confirm-btn");
+
+      if (!overlayEl) return;
+      if (titleEl) {
+        titleEl.textContent = `Switch to ${targetEnv}`;
+      }
+      if (msgEl) {
+        msgEl.textContent = `Are you sure you want to switch to ${targetEnv} mode? (Backend port will switch to ${targetPort})`;
+      }
+      if (confirmBtnEl) {
+        confirmBtnEl.textContent = "Confirm Switch";
+      }
+
+      if (overlayEl.classList.contains("hidden")) {
+        await openOverlayModal(() => {
+          overlayEl.classList.remove("hidden");
+          overlayEl.setAttribute("aria-hidden", "false");
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => overlayEl.classList.add("open")),
+          );
+        });
+      }
+    }
+
+    function closeEnvSwitchModal() {
+      const overlayEl = document.getElementById("env-switch-modal-overlay") || envSwitchModalOverlay;
+      if (!overlayEl || overlayEl.classList.contains("hidden")) return;
+      closeOverlayModal(() => {
+        overlayEl.classList.remove("open");
+        overlayEl.setAttribute("aria-hidden", "true");
+        setTimeout(() => {
+          if (!overlayEl.classList.contains("open")) overlayEl.classList.add("hidden");
+        }, 200);
       });
     }
+
+    async function confirmEnvSwitch() {
+      const nextMode = currentMode === "dev" ? "prod" : "dev";
+      const targetUrl = nextMode === "dev" ? "http://10.215.56.196:8001" : "http://10.215.56.196:8009";
+      const targetEnvName = nextMode === "dev" ? "Development (port 8001)" : "Production (port 8009)";
+
+      const confirmBtnEl = document.getElementById("env-switch-modal-confirm-btn");
+      if (confirmBtnEl) {
+        confirmBtnEl.disabled = true;
+        confirmBtnEl.textContent = "Checking server...";
+      }
+
+      let isServerReachable = false;
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
+        const response = await fetch(`${targetUrl}/health`, {
+          method: "GET",
+          signal: controller.signal,
+          cache: "no-store",
+        }).catch(() => null);
+        clearTimeout(timeoutId);
+
+        if (response && (response.ok || response.status === 200 || response.status === 404)) {
+          isServerReachable = true;
+        } else {
+          // Alternative fallback ping without endpoint
+          const pingController = new AbortController();
+          const pingTimeoutId = setTimeout(() => pingController.abort(), 3000);
+          const pingRes = await fetch(targetUrl, {
+            method: "HEAD",
+            mode: "no-cors",
+            signal: pingController.signal,
+          }).catch(() => null);
+          clearTimeout(pingTimeoutId);
+          if (pingRes) {
+            isServerReachable = true;
+          }
+        }
+      } catch (_e) {
+        isServerReachable = false;
+      }
+
+      if (!isServerReachable) {
+        if (confirmBtnEl) {
+          confirmBtnEl.disabled = false;
+          confirmBtnEl.textContent = "Confirm Switch";
+        }
+        showToast(`Cannot switch environment! The target server ${targetEnvName} is currently not responding.`, "error");
+        const msgEl = document.getElementById("env-switch-modal-message") || envSwitchModalMessage;
+        if (msgEl) {
+          msgEl.innerHTML = `<span style="color: #ef4444; font-weight: 600;">Server Unreachable!</span><br>The ${targetEnvName} server is not responding. Environment switch cancelled.`;
+        }
+        return;
+      }
+
+      localStorage.setItem("oneview_env_mode", nextMode);
+      closeEnvSwitchModal();
+      showToast(`Server responsive! Switching to ${nextMode === "dev" ? "Dev" : "Production"} mode... Reloading...`, "success");
+      setTimeout(() => {
+        window.location.reload();
+      }, 600);
+    }
+
+    if (switchEnvBtn) {
+      switchEnvBtn.addEventListener("click", () => {
+        closeProfileMenu();
+        openEnvSwitchModal();
+      });
+    }
+
+    if (envSwitchModalCloseBtn) envSwitchModalCloseBtn.addEventListener("click", closeEnvSwitchModal);
+    if (envSwitchModalCancelBtn) envSwitchModalCancelBtn.addEventListener("click", closeEnvSwitchModal);
+    if (envSwitchModalConfirmBtn) envSwitchModalConfirmBtn.addEventListener("click", confirmEnvSwitch);
+
+    // Global Alt + D shortcut
+    document.addEventListener("keydown", (e) => {
+      if (e.altKey && (e.key === "d" || e.key === "D")) {
+        e.preventDefault();
+        openEnvSwitchModal();
+      }
+    });
 
     const shortcutsBtn = document.getElementById("shortcuts-guide-btn");
     const shortcutsModal = document.getElementById("shortcuts-guide-modal");
