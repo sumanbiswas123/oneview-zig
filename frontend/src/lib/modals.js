@@ -730,6 +730,126 @@ export function initializeProfileMenu() {
     if (envSwitchModalCancelBtn) envSwitchModalCancelBtn.addEventListener("click", closeEnvSwitchModal);
     if (envSwitchModalConfirmBtn) envSwitchModalConfirmBtn.addEventListener("click", confirmEnvSwitch);
 
+    // Dev User Simulation (Switch User / Switch to Main User)
+    const switchUserBtn = document.getElementById("switch-user-btn");
+    const switchMainUserBtn = document.getElementById("switch-main-user-btn");
+    const switchUserModalOverlay = document.getElementById("switch-user-modal-overlay");
+    const switchUserModalCloseBtn = document.getElementById("switch-user-modal-close-btn");
+    const switchUserModalCancelBtn = document.getElementById("switch-user-modal-cancel-btn");
+    const switchUserForm = document.getElementById("switch-user-form");
+    const switchUserIdInput = document.getElementById("switch-user-id-input");
+
+    const mainUserRaw = localStorage.getItem("oneview_main_user_session");
+    const isSwitchedUser = Boolean(mainUserRaw);
+
+    // Show options ONLY for Dev users when in Dev mode
+    if (userRole === "dev" && currentMode === "dev") {
+      if (switchUserBtn) switchUserBtn.classList.remove("hidden");
+      if (isSwitchedUser && switchMainUserBtn) {
+        switchMainUserBtn.classList.remove("hidden");
+      }
+    }
+
+    async function openSwitchUserModal() {
+      if (userRole !== "dev" || currentMode !== "dev") return;
+      if (!switchUserModalOverlay) return;
+      if (switchUserIdInput) switchUserIdInput.value = "";
+      if (switchUserModalOverlay.classList.contains("hidden")) {
+        await openOverlayModal(() => {
+          switchUserModalOverlay.classList.remove("hidden");
+          switchUserModalOverlay.setAttribute("aria-hidden", "false");
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => switchUserModalOverlay.classList.add("open")),
+          );
+        });
+      }
+    }
+
+    function closeSwitchUserModal() {
+      if (!switchUserModalOverlay || switchUserModalOverlay.classList.contains("hidden")) return;
+      closeOverlayModal(() => {
+        switchUserModalOverlay.classList.remove("open");
+        switchUserModalOverlay.setAttribute("aria-hidden", "true");
+        setTimeout(() => {
+          if (!switchUserModalOverlay.classList.contains("open")) switchUserModalOverlay.classList.add("hidden");
+        }, 200);
+      });
+    }
+
+    if (switchUserBtn) {
+      switchUserBtn.addEventListener("click", () => {
+        closeProfileMenu();
+        openSwitchUserModal();
+      });
+    }
+
+    if (switchUserModalCloseBtn) switchUserModalCloseBtn.addEventListener("click", closeSwitchUserModal);
+    if (switchUserModalCancelBtn) switchUserModalCancelBtn.addEventListener("click", closeSwitchUserModal);
+
+    if (switchUserForm) {
+      switchUserForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const targetUserId = (switchUserIdInput?.value || "").trim();
+        if (!targetUserId) return;
+
+        // Save original main user session if not already stored
+        if (!localStorage.getItem("oneview_main_user_session")) {
+          const currentAuthData = {
+            authToken: localStorage.getItem("authToken"),
+            userEmail: localStorage.getItem("userEmail"),
+            userName: localStorage.getItem("userName"),
+            username: localStorage.getItem("username"),
+            emp_id: localStorage.getItem("emp_id"),
+            userRole: localStorage.getItem("userRole"),
+            appCatalog: localStorage.getItem("appCatalog"),
+          };
+          localStorage.setItem("oneview_main_user_session", JSON.stringify(currentAuthData));
+        }
+
+        // Simulate target user session info across all analytics and identity keys
+        const cleanName = targetUserId.split("@")[0] || targetUserId;
+        localStorage.setItem("userEmail", targetUserId);
+        localStorage.setItem("userName", cleanName);
+        localStorage.setItem("username", targetUserId);
+        localStorage.setItem("emp_id", targetUserId);
+
+        try {
+          sessionStorage.setItem("username", targetUserId);
+          sessionStorage.setItem("emp_id", targetUserId);
+        } catch (_e) {}
+
+        closeSwitchUserModal();
+        showToast(`Switched session to user ${targetUserId}. Reloading...`, "success");
+        setTimeout(() => {
+          window.location.reload();
+        }, 600);
+      });
+    }
+
+    if (switchMainUserBtn) {
+      switchMainUserBtn.addEventListener("click", () => {
+        closeProfileMenu();
+        const mainSessionStr = localStorage.getItem("oneview_main_user_session");
+        if (mainSessionStr) {
+          try {
+            const mainSession = JSON.parse(mainSessionStr);
+            if (mainSession.authToken) localStorage.setItem("authToken", mainSession.authToken);
+            if (mainSession.userEmail) localStorage.setItem("userEmail", mainSession.userEmail);
+            if (mainSession.userName) localStorage.setItem("userName", mainSession.userName);
+            if (mainSession.username) localStorage.setItem("username", mainSession.username);
+            if (mainSession.emp_id) localStorage.setItem("emp_id", mainSession.emp_id);
+            if (mainSession.userRole) localStorage.setItem("userRole", mainSession.userRole);
+            if (mainSession.appCatalog) localStorage.setItem("appCatalog", mainSession.appCatalog);
+          } catch (_e) {}
+          localStorage.removeItem("oneview_main_user_session");
+        }
+        showToast("Switched back to main user session. Reloading...", "success");
+        setTimeout(() => {
+          window.location.reload();
+        }, 600);
+      });
+    }
+
     // Global Alt + D shortcut
     document.addEventListener("keydown", (e) => {
       if (e.altKey && (e.key === "d" || e.key === "D")) {

@@ -1309,6 +1309,17 @@ function closeStartupDiagnosticsModal() {
   });
 }
 
+function applyDevModeIndicator() {
+  const devIndicator = document.getElementById("dev-mode-indicator");
+  if (!devIndicator) return;
+  const envMode = String(localStorage.getItem("oneview_env_mode") || "prod").toLowerCase();
+  if (envMode === "dev") {
+    devIndicator.classList.remove("hidden");
+  } else {
+    devIndicator.classList.add("hidden");
+  }
+}
+
 function applyStartupDiagnosticsAvailability() {
   const startupDiagnosticsBtn = document.getElementById("startup-diagnostics");
   const startupDiagnosticsModal = document.getElementById("startup-diagnostics-modal");
@@ -1676,6 +1687,7 @@ window.addEventListener("DOMContentLoaded", () => {
   initializeChangePasswordModal();
   initializeProfileMenu();
   applyStartupDiagnosticsAvailability();
+  applyDevModeIndicator();
   initializeWebview();
   initializeLeaveApplicationModal();
   loadAppVersion();

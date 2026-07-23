@@ -1,5 +1,5 @@
 import "../../components/titlebar/titlebar.js";
-import { APP_DISPLAY_NAME, APP_SERVICE_BASE_URL, DEV_ACCESS_LIST_URL, QC_ACCESS_LIST_URL, IS_DEV_APP_BUILD } from "../../lib/app-env.js";
+import { APP_DISPLAY_NAME, PROD_SERVICE_BASE_URL, DEV_ACCESS_LIST_URL, QC_ACCESS_LIST_URL, IS_DEV_APP_BUILD } from "../../lib/app-env.js";
 import { STORAGE_KEYS } from "../../lib/app-runtime.js";
 import { showToast } from "../../lib/notifications.js";
 
@@ -308,7 +308,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const forceUpdateProgressEl = document.getElementById(
     "force-update-progress",
   );
-  const corpPingUrl = `${APP_SERVICE_BASE_URL}/auth/ping`;
+  const corpPingUrl = `${PROD_SERVICE_BASE_URL}/auth/ping`;
   const publicProbeUrl = "https://www.gstatic.com/generate_204";
   let internetConnected = false;
   let corpNetworkReachable = false;
@@ -804,7 +804,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       const version = await window.api.getAppVersion();
       if (!version) return;
 
-      const endpoint = `${APP_SERVICE_BASE_URL}/api/send-version-data`;
+      const endpoint = `${PROD_SERVICE_BASE_URL}/api/send-version-data`;
       console.log("[Version Sync] Sending version data...", { empId, version });
 
       const res = await fetch(endpoint, {
@@ -929,9 +929,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
-    // Try HTTP POST to backend first
+    // Try HTTP POST to backend first (always hit production 8009 for login)
     try {
-      const res = await fetch(`${APP_SERVICE_BASE_URL}/auth/login`, {
+      const res = await fetch(`${PROD_SERVICE_BASE_URL}/auth/login`, {
         method: "POST",
         mode: "cors",
         credentials: "include",
@@ -943,7 +943,6 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
 
       if (res.ok) {
-        // openDashboard(); // MOVED DOWN
         let data = null;
         try {
           data = await res.json();
@@ -985,13 +984,10 @@ document.addEventListener("DOMContentLoaded", async () => {
             detectPasswordChangeRequired(data, username, password),
           );
 
-          // Keep the successful login path non-blocking. If we do not already
-          // have the first name, enrich persisted credentials in the background.
           persistSuccessfulLoginCredentials(username, password, firstName);
 
           loginAttempts = 0;
           if (errorEl) {
-            // keep hidden — just clear stale text
             errorEl.classList.add("hidden");
             errorEl.textContent = "";
           }
@@ -1011,17 +1007,11 @@ document.addEventListener("DOMContentLoaded", async () => {
           );
         }
       } else {
-        // non-2xx response — treat as failure and fallback
         console.warn("Login POST returned", res.status);
         throw new Error("Server returned " + res.status);
       }
     } catch (err) {
-      // network error or backend not available — try IPC verifyLogin if available
-      console.warn(
-        "POST /api/login failed, falling back to IPC/local check",
-        err,
-      );
-      stopDots("Connected, but auth server is unavailable.", "error");
+      console.warn("POST /auth/login failed, attempting IPC fallback if available", err);
       try {
         if (window.api && typeof window.api.verifyLogin === "function") {
           const result = await window.api.verifyLogin(username, password);
@@ -1033,7 +1023,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             persistSuccessfulLoginCredentials(username, password);
             loginAttempts = 0;
             if (errorEl) {
-              errorEl.classList.remove("hidden");
+              errorEl.classList.add("hidden");
               errorEl.textContent = "";
             }
             showSuccessAndRedirect(
@@ -1049,27 +1039,8 @@ document.addEventListener("DOMContentLoaded", async () => {
             );
           }
         } else {
-          // final fallback: local credentials (dev only)
-          const isValid = usernames.some(
-            (user) => user.username === username && user.password === password,
-          );
-          if (isValid) {
-            markPasswordChangeRequired(
-              username,
-              detectPasswordChangeRequired(null, username, password),
-            );
-            persistSuccessfulLoginCredentials(username, password);
-            loginAttempts = 0;
-            if (errorEl) {
-              errorEl.classList.remove("hidden");
-              errorEl.textContent = "";
-            }
-            showSuccessAndRedirect("Login successful!");
-            return;
-          } else {
-            loginAttempts++;
-            showError("Incorrect username or password");
-          }
+          loginAttempts++;
+          showError("Incorrect username or password");
         }
       } catch (ipcErr) {
         console.error("verifyLogin fallback failed", ipcErr);
@@ -1078,12 +1049,11 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     }
 
-    if (loginAttempts) {
+    if (loginAttempts >= 3 && guestButton) {
       guestButton.classList.remove("hidden");
     }
   }
 
-  // Form toggle functions for forgot password feature
   function showLoginForm() {
     const loginForm = document.getElementById("login-form");
     const forgotPasswordForm = document.getElementById("forgot-password-form");
@@ -1093,14 +1063,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     if (loginForm) {
       loginForm.classList.remove("hidden");
-      // Focus on username field
       const usernameInput = loginForm.querySelector("#username");
       if (usernameInput) {
         setTimeout(() => usernameInput.focus(), 100);
       }
     }
 
-    // Clear error message
     if (errorEl) {
       errorEl.classList.add("hidden");
       errorEl.textContent = "";
@@ -1116,7 +1084,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     if (forgotPasswordForm) {
       forgotPasswordForm.classList.remove("hidden");
-      // Focus on employee ID field
       const employeeIdInput = forgotPasswordForm.querySelector(
         "#forgot-employee-id",
       );
@@ -1125,7 +1092,6 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     }
 
-    // Clear error message
     if (errorEl) {
       errorEl.classList.add("hidden");
       errorEl.textContent = "";

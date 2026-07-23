@@ -2154,7 +2154,12 @@ fn handleConnection(ctx: ConnCtx) void {
         const target_val = parsed.value.object.get("target");
         if (target_val) |tv| {
             if (g_app_ptr) |app| {
-                handleOpenTarget(app, tv.string);
+                if (app.main_window_hwnd) |hwnd| {
+                    const dup_target = std.heap.page_allocator.dupeZ(u8, tv.string) catch null;
+                    if (dup_target) |dt| {
+                        _ = PostMessageA(hwnd, 0x0400 + 50, 0, @intCast(@intFromPtr(dt.ptr)));
+                    }
+                }
             }
         }
         sendJson(ctx.sock, "{\"success\":true}");
@@ -6294,6 +6299,7 @@ fn customWndProc(hwnd: ?*anyopaque, msg: u32, wparam: usize, lparam: usize) call
     const WM_DESTROY = 0x0002;
     const WM_USER = 0x0400;
     const WM_TRAY_CALLBACK = WM_USER + 1;
+    const WM_OPEN_TARGET_MSG = WM_USER + 50;
     const WM_LBUTTONDBLCLK = 0x0203;
     const WM_LBUTTONUP = 0x0202;
     const WM_RBUTTONUP = 0x0205;
@@ -6501,6 +6507,18 @@ fn customWndProc(hwnd: ?*anyopaque, msg: u32, wparam: usize, lparam: usize) call
             _ = DestroyMenu(hmenu);
             return 0;
         }
+    }
+
+    if (msg == WM_OPEN_TARGET_MSG) {
+        if (lparam != 0) {
+            const ptr: [*:0]const u8 = @ptrFromInt(@as(usize, @intCast(lparam)));
+            const target_slice = std.mem.span(ptr);
+            if (g_app_ptr) |app| {
+                handleOpenTarget(app, target_slice);
+            }
+            std.heap.page_allocator.free(target_slice);
+        }
+        return 0;
     }
 
     if (msg == WM_COMMAND) {
@@ -6743,8 +6761,13 @@ fn handleOpenTarget(app: *App, target: []const u8) void {
         _ = kernel32.SetForegroundWindow(hwnd);
     }
 
-    // __SHOW__ is a special signal to just bring the window to front and reset to login
-    if (std.mem.eql(u8, target, "__SHOW__")) {
+    // Reset to login screen when brought to front via shortcut, tray, or search
+    const trimmed_target = std.mem.trim(u8, target, " \t\r\n\"");
+    const is_explicit_show = std.mem.eql(u8, trimmed_target, "__SHOW__") or 
+                             trimmed_target.len == 0 or 
+                             (trimmed_target.len > 0 and trimmed_target[0] == '-');
+
+    if (is_explicit_show) {
         if (app.main_webview) |main_wv| {
             main_wv.navigate("http://127.0.0.1:" ++ SERVER_PORT_STR ++ "/pages/login/index.html") catch {};
         }
