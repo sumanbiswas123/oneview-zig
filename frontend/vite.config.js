@@ -21,10 +21,6 @@ module.exports = defineConfig({
           "src/pages/appstore/appstore.html",
         ),
         login: resolve(__dirname, "src/pages/login/index.html"),
-        devrunner: resolve(
-          __dirname,
-          "src/pages/dev-runner/dev-runner.html",
-        ),
         devproject: resolve(
           __dirname,
           "src/pages/dev-project/dev-project.html",
@@ -33,7 +29,6 @@ module.exports = defineConfig({
           __dirname,
           "src/pages/detached-browser/index.html",
         ),
-        runner: resolve(__dirname, "src/pages/runner/runner.html"),
         updateprompt: resolve(__dirname, "src/pages/update-prompt/index.html"),
         updatehelper: resolve(
           __dirname,

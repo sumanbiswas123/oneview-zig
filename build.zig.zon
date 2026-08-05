@@ -4,12 +4,6 @@
     .version = "1.0.0",
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
-        // In a standard zero-native app, we fetch the zero-native engine library.
-        // We'll declare the dependency package here.
-        .zero_native = .{
-            .url = "https://github.com/vercel-labs/zero-native/archive/refs/heads/main.tar.gz",
-            .hash = "zero_native-0.1.0-qoHd43Y2OQC4AGkH2fjI4Euzh0QKDU3s3xiA1ad9JQ98",
-        },
         .webview = .{
             .url = "git+https://github.com/happystraw/zig-webview#3e6822d30896aa434435edae23b35ece9c20ffac",
             .hash = "webview-0.0.0-mgPxHLxUKQBvcezqN-H2oeKpZmLQbObTxi7aoJJBcRia",

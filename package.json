@@ -3,6 +3,13 @@
   "version": "1.2.7",
   "description": "OneView Suite compile & package scripts",
   "scripts": {
-    "build:all": "npx rimraf ui && npm run vite:build --prefix frontend && .zig-compiler\\zig-x86_64-windows-0.16.0\\zig-x86_64-windows-0.16.0\\zig.exe build -Doptimize=ReleaseFast && \"C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe\" oneview.iss"
+    "clean": "node -e \"require('fs').rmSync('ui', {recursive: true, force: true})\"",
+    "build:frontend": "npm run vite:build --prefix frontend",
+    "build:zig": "zig build",
+    "build:zig:release": "zig build -Doptimize=ReleaseFast",
+    "build:setup": "node -e \"const {execSync} = require('child_process'); const fs = require('fs'); const path = require('path'); const os = require('os'); const paths = ['C:\\\\Program Files (x86)\\\\Inno Setup 6\\\\ISCC.exe', 'C:\\\\Program Files\\\\Inno Setup 6\\\\ISCC.exe', path.join(os.homedir(), 'AppData\\\\Local\\\\Programs\\\\Inno Setup 6\\\\ISCC.exe')]; const iscc = paths.find(p => fs.existsSync(p)) || 'iscc'; execSync(`\\\"${iscc}\\\" oneview.iss`, {stdio: 'inherit'});\"",
+    "build:all": "npm run clean && npm run build:frontend && npm run build:zig && npm run build:setup",
+    "build:release": "npm run clean && npm run build:frontend && npm run build:zig:release && npm run build:setup",
+    "build": "npm run build:all"
   }
 }

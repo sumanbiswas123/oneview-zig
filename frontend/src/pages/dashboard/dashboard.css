@@ -4382,8 +4382,8 @@ body.dark-mode .nav-btn:hover {
 .action-btn svg {
   opacity: 0;
   transition: opacity 0.2s;
-  position: relative;
-  top: -2.5px;
+  display: block;
+  margin: auto;
 }
 
 .action-btn:hover svg {

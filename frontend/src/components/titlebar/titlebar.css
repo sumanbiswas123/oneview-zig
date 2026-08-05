@@ -18,11 +18,12 @@
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  padding: 0 8px;
+  padding: 0 12px;
   box-sizing: border-box;
   position: absolute;
   top: 0;
-  right: 8px;
+  right: 0;
+  left: 0;
   z-index: 1300;
 }
 
@@ -31,10 +32,12 @@
   height: 14px;
   border-radius: 50%;
   border: 0px;
-  margin: 5px 4px 0px 0px;
-  padding: 5px 0px 0px 0px;
+  margin: 0;
+  padding: 0;
   -webkit-app-region: no-drag;
-  float: right;
+  cursor: pointer;
+  box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 .action-btn::after {
