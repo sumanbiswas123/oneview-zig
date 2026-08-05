@@ -1414,7 +1414,13 @@ fn handleConnection(ctx: ConnCtx) void {
         defer allocator.free(url_z);
         defer allocator.free(path_z);
         const rc = native_download_file(url_z, path_z);
-        sendJson(ctx.sock, if (rc == 0) "{\"success\":true}" else "{\"success\":false,\"message\":\"Download failed\"}");
+        if (rc == 0) {
+            sendJson(ctx.sock, "{\"success\":true}");
+        } else {
+            var err_msg_buf: [128]u8 = undefined;
+            const err_str = std.fmt.bufPrint(&err_msg_buf, "{{\"success\":false,\"message\":\"Download failed (code {d})\"}}", .{rc}) catch "{\"success\":false,\"message\":\"Download failed\"}";
+            sendJson(ctx.sock, err_str);
+        }
         return;
     }
 

@@ -33,19 +33,46 @@ extern "C" int native_download_file(const char* url, const char* target_path) {
     g_download_total = 0;
     strncpy_s(g_download_target_path, MAX_PATH, target_path, MAX_PATH - 1);
 
+    // Normalize forward slashes to backslashes for Windows API path functions
+    char win_target_path[MAX_PATH];
+    strncpy_s(win_target_path, MAX_PATH, target_path, MAX_PATH - 1);
+    for (int i = 0; win_target_path[i] != '\0'; i++) {
+        if (win_target_path[i] == '/') win_target_path[i] = '\\';
+    }
+
     // Ensure parent directory exists
     char dir[MAX_PATH];
-    strncpy_s(dir, target_path, MAX_PATH - 1);
+    strncpy_s(dir, win_target_path, MAX_PATH - 1);
     PathRemoveFileSpecA(dir);
     SHCreateDirectoryExA(nullptr, dir, nullptr);
 
     HINTERNET hInet = InternetOpenA("OneView/1.0", INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, 0);
     if (!hInet) return -1;
 
-    HINTERNET hUrl = InternetOpenUrlA(hInet, url, nullptr, 0,
-        INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_SECURE |
-        INTERNET_FLAG_IGNORE_CERT_CN_INVALID | INTERNET_FLAG_IGNORE_CERT_DATE_INVALID, 0);
-    if (!hUrl) { InternetCloseHandle(hInet); return -2; }
+    DWORD flags = INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE;
+    if (_strnicmp(url, "https://", 8) == 0) {
+        flags |= INTERNET_FLAG_SECURE | INTERNET_FLAG_IGNORE_CERT_CN_INVALID | INTERNET_FLAG_IGNORE_CERT_DATE_INVALID;
+    }
+
+    HINTERNET hUrl = InternetOpenUrlA(hInet, url, nullptr, 0, flags, 0);
+    if (!hUrl) { 
+        DWORD err = GetLastError();
+        printf("[native_download_file] InternetOpenUrlA failed for url: %s, error code: %lu\n", url, err);
+        InternetCloseHandle(hInet); 
+        return -2; 
+    }
+
+    // Check HTTP status code
+    DWORD statusCode = 0;
+    DWORD statusCodeSize = sizeof(statusCode);
+    if (HttpQueryInfoA(hUrl, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &statusCode, &statusCodeSize, nullptr)) {
+        if (statusCode < 200 || statusCode >= 300) {
+            printf("[native_download_file] Download HTTP status error: %lu for url: %s\n", statusCode, url);
+            InternetCloseHandle(hUrl);
+            InternetCloseHandle(hInet);
+            return -4;
+        }
+    }
 
     // Try to get Content-Length
     char szContentLength[32] = "";
@@ -55,9 +82,11 @@ extern "C" int native_download_file(const char* url, const char* target_path) {
         g_download_total = atol(szContentLength);
     }
 
-    HANDLE hFile = CreateFileA(target_path, GENERIC_WRITE, 0, nullptr,
+    HANDLE hFile = CreateFileA(win_target_path, GENERIC_WRITE, 0, nullptr,
         CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hFile == INVALID_HANDLE_VALUE) {
+        DWORD err = GetLastError();
+        printf("[native_download_file] CreateFileA failed for target path: %s, error code: %lu\n", win_target_path, err);
         InternetCloseHandle(hUrl); InternetCloseHandle(hInet); return -3;
     }
 
