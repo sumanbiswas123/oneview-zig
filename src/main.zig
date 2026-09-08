@@ -1325,44 +1325,6 @@ fn handleConnection(ctx: ConnCtx) void {
 
     // Route: /api/check-for-updates
     if (std.mem.eql(u8, url_path, "/api/check-for-updates")) {
-        // Verify disk existence: if file is not on disk, reset downloaded/downloading flags
-        var file_on_disk = false;
-        if (g_update_installer_path) |p| {
-            if (allocator.dupeZ(u8, p)) |pz| {
-                defer allocator.free(pz);
-                if (fopen(pz, "rb")) |fh| {
-                    _ = fseek(fh, 0, 2);
-                    const sz: usize = @intCast(ftell(fh));
-                    _ = fclose(fh);
-                    if (sz > 1000000) file_on_disk = true;
-                }
-            } else |_| {}
-        }
-        if (!file_on_disk) {
-            g_update_status = "idle";
-            g_update_percent = 0.0;
-            g_update_received = 0;
-            g_update_total = 0;
-            g_update_installer_path = null;
-            g_update_downloading = false;
-            g_silent_update_ready = false;
-            g_new_exe_path = null;
-            g_update_error = null;
-        }
-
-        if (g_update_downloading or (std.mem.eql(u8, g_update_status, "downloaded") and file_on_disk)) {
-            const resp = std.fmt.allocPrint(allocator,
-                "{{\"success\":true,\"updateAvailable\":true,\"status\":\"{s}\",\"currentVersion\":\"{s}\",\"latestVersion\":\"{s}\",\"downloadUrl\":\"{s}\"}}",
-                .{ g_update_status, APP_VERSION, g_update_version orelse APP_VERSION, g_update_download_url orelse "" }
-            ) catch {
-                sendJson(ctx.sock, "{\"success\":true,\"updateAvailable\":true}");
-                return;
-            };
-            defer allocator.free(resp);
-            sendJson(ctx.sock, resp);
-            return;
-        }
-
         g_update_status = "checking";
         triggerWebviewUpdateStatus(null, "checking", 0.0, null);
 
@@ -6385,13 +6347,28 @@ pub fn main(init: std.process.Init) !void {
     const user32_style = struct {
         extern "user32" fn SetWindowPos(hWnd: ?*anyopaque, hWndInsertAfter: ?*anyopaque, X: c_int, Y: c_int, cx: c_int, cy: c_int, uFlags: u32) callconv(.winapi) i32;
         extern "user32" fn ShowWindow(hWnd: ?*anyopaque, nCmdShow: c_int) callconv(.winapi) i32;
+        extern "user32" fn SetForegroundWindow(hWnd: ?*anyopaque) callconv(.winapi) i32;
+        extern "user32" fn SetActiveWindow(hWnd: ?*anyopaque) callconv(.winapi) ?*anyopaque;
+        extern "user32" fn BringWindowToTop(hWnd: ?*anyopaque) callconv(.winapi) i32;
     };
     // Force Windows to recalculate the frame layout using the subclassed customWndProc NCCALCSIZE handler
     _ = user32_style.SetWindowPos(app.main_window_hwnd, null, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);
 
     if (is_detached) {
         _ = user32_style.ShowWindow(app.main_window_hwnd, 3); // SW_SHOWMAXIMIZED = 3
+    } else {
+        _ = user32_style.ShowWindow(app.main_window_hwnd, 1); // SW_SHOWNORMAL = 1
     }
+
+    const HWND_TOPMOST: ?*anyopaque = @ptrFromInt(@as(usize, ~@as(usize, 0)));
+    const HWND_NOTOPMOST: ?*anyopaque = @ptrFromInt(@as(usize, ~@as(usize, 1)));
+
+    // Bring cleanly to top of Z-order over all other open application windows
+    _ = user32_style.SetWindowPos(app.main_window_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    _ = user32_style.SetWindowPos(app.main_window_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    _ = user32_style.BringWindowToTop(app.main_window_hwnd);
+    _ = user32_style.SetForegroundWindow(app.main_window_hwnd);
+    _ = user32_style.SetActiveWindow(app.main_window_hwnd);
 
 
     // Setup system tray icon (skip for detached window)
@@ -7590,6 +7567,12 @@ fn executeUpdateInstaller(allocator: std.mem.Allocator, installer_path: []const 
     const path_z = allocator.dupeZ(u8, installer_path) catch return false;
     defer allocator.free(path_z);
 
+    const user32 = struct {
+        extern "user32" fn AllowSetForegroundWindow(dwProcessId: u32) callconv(.winapi) i32;
+    };
+    const ASFW_ANY: u32 = 0xFFFFFFFF;
+    _ = user32.AllowSetForegroundWindow(ASFW_ANY);
+
     const shell32 = struct {
         extern "shell32" fn ShellExecuteA(
             hwnd: ?*anyopaque,
@@ -7600,7 +7583,8 @@ fn executeUpdateInstaller(allocator: std.mem.Allocator, installer_path: []const 
             nShowCmd: c_int
         ) callconv(.winapi) ?*anyopaque;
     };
-    const res = shell32.ShellExecuteA(null, "open", path_z.ptr, "/SILENT /FORCECLOSEAPPLICATIONS", null, 1);
+    const parent_hwnd = if (g_app_ptr) |a| a.main_window_hwnd else null;
+    const res = shell32.ShellExecuteA(parent_hwnd, "open", path_z.ptr, "/SILENT /FORCECLOSEAPPLICATIONS", null, 1);
     const code: usize = @intFromPtr(res);
     if (code > 32) {
         // Successfully launched installer; terminate current instance

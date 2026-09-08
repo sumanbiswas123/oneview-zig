@@ -77,6 +77,12 @@ Filename: "{app}\oneview.exe"; Description: "Launch OneView"; Flags: nowait
 Filename: "taskkill.exe"; Parameters: "/f /im oneview.exe /t"; Flags: runhidden waituntilterminated
 
 [Code]
+function SetForegroundWindow(hWnd: HWND): Boolean;
+external 'SetForegroundWindow@user32.dll stdcall';
+
+function BringWindowToTop(hWnd: HWND): Boolean;
+external 'BringWindowToTop@user32.dll stdcall';
+
 procedure KillRunningApp();
 var
   ResultCode: Integer;
@@ -99,8 +105,18 @@ begin
   end;
 end;
 
+procedure InitializeWizard();
+begin
+  WizardForm.BringToFront;
+  BringWindowToTop(WizardForm.Handle);
+  SetForegroundWindow(WizardForm.Handle);
+end;
+
 procedure CurPageChanged(CurPageID: Integer);
 begin
+  WizardForm.BringToFront;
+  BringWindowToTop(WizardForm.Handle);
+  SetForegroundWindow(WizardForm.Handle);
   if CurPageID = wpWelcome then
   begin
     // Post a BM_CLICK message (245) to click the Next button automatically once the Welcome page is shown
