@@ -20,20 +20,24 @@ static DWORD g_download_total = 0;
 static char g_download_target_path[MAX_PATH] = "";
 
 extern "C" void get_native_download_progress(double* progress, DWORD* received, DWORD* total, char* target_path, int max_len) {
-    *progress = g_download_progress;
-    *received = g_download_received;
-    *total = g_download_total;
-    strncpy_s(target_path, max_len, g_download_target_path, max_len - 1);
+    if (progress) *progress = g_download_progress;
+    if (received) *received = g_download_received;
+    if (total) *total = g_download_total;
+    if (target_path && max_len > 0) {
+        strncpy_s(target_path, max_len, g_download_target_path, max_len - 1);
+    }
 }
 
-// ── Native download via WinINet ────────────────────────────────────────────────
-extern "C" int native_download_file(const char* url, const char* target_path) {
+// ── Ultra-Fast Native Streaming Download via WinINet ─────────────────────────
+extern "C" int native_download_file(const char* url, const char* target_path, DWORD expected_size) {
+    if (!url || !target_path) return -1;
+
     g_download_progress = 0.0;
     g_download_received = 0;
-    g_download_total = 0;
+    g_download_total = expected_size > 0 ? expected_size : 3800000;
     strncpy_s(g_download_target_path, MAX_PATH, target_path, MAX_PATH - 1);
 
-    // Normalize forward slashes to backslashes for Windows API path functions
+    // Normalize forward slashes to backslashes
     char win_target_path[MAX_PATH];
     strncpy_s(win_target_path, MAX_PATH, target_path, MAX_PATH - 1);
     for (int i = 0; win_target_path[i] != '\0'; i++) {
@@ -46,67 +50,99 @@ extern "C" int native_download_file(const char* url, const char* target_path) {
     PathRemoveFileSpecA(dir);
     SHCreateDirectoryExA(nullptr, dir, nullptr);
 
-    HINTERNET hInet = InternetOpenA("OneView/1.0", INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, 0);
-    if (!hInet) return -1;
+    // Delete any old incomplete file first
+    DeleteFileA(win_target_path);
 
-    DWORD flags = INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE;
-    if (_strnicmp(url, "https://", 8) == 0) {
-        flags |= INTERNET_FLAG_SECURE | INTERNET_FLAG_IGNORE_CERT_CN_INVALID | INTERNET_FLAG_IGNORE_CERT_DATE_INVALID;
+    // 1. Initialize WinINet session
+    HINTERNET hInternet = InternetOpenA("OneView-Updater/1.0", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
+    if (!hInternet) {
+        return -1;
     }
 
-    HINTERNET hUrl = InternetOpenUrlA(hInet, url, nullptr, 0, flags, 0);
-    if (!hUrl) { 
-        DWORD err = GetLastError();
-        printf("[native_download_file] InternetOpenUrlA failed for url: %s, error code: %lu\n", url, err);
-        InternetCloseHandle(hInet); 
-        return -2; 
+    // 2. Configure connection (15s) and receive (30s) timeouts
+    DWORD connect_timeout_ms = 15000;
+    DWORD receive_timeout_ms = 30000;
+    InternetSetOptionA(hInternet, INTERNET_OPTION_CONNECT_TIMEOUT, &connect_timeout_ms, sizeof(connect_timeout_ms));
+    InternetSetOptionA(hInternet, INTERNET_OPTION_RECEIVE_TIMEOUT, &receive_timeout_ms, sizeof(receive_timeout_ms));
+
+    // 3. Open URL stream with automatic HTTP 302 redirect handling
+    DWORD openUrlFlags = INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_PRAGMA_NOCACHE |
+                         INTERNET_FLAG_IGNORE_REDIRECT_TO_HTTPS | INTERNET_FLAG_IGNORE_REDIRECT_TO_HTTP;
+    HINTERNET hUrl = InternetOpenUrlA(hInternet, url, NULL, 0, openUrlFlags, 0);
+    if (!hUrl) {
+        InternetCloseHandle(hInternet);
+        return -2;
     }
 
-    // Check HTTP status code
-    DWORD statusCode = 0;
-    DWORD statusCodeSize = sizeof(statusCode);
-    if (HttpQueryInfoA(hUrl, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &statusCode, &statusCodeSize, nullptr)) {
-        if (statusCode < 200 || statusCode >= 300) {
-            printf("[native_download_file] Download HTTP status error: %lu for url: %s\n", statusCode, url);
-            InternetCloseHandle(hUrl);
-            InternetCloseHandle(hInet);
-            return -4;
+    // 4. Query Content-Length header for accurate progress calculation
+    char contentLengthStr[64] = {0};
+    DWORD contentLengthStrLen = sizeof(contentLengthStr);
+    DWORD headerIndex = 0;
+    if (HttpQueryInfoA(hUrl, HTTP_QUERY_CONTENT_LENGTH, contentLengthStr, &contentLengthStrLen, &headerIndex)) {
+        DWORD parsedTotal = (DWORD)strtoul(contentLengthStr, nullptr, 10);
+        if (parsedTotal > 0) {
+            g_download_total = parsedTotal;
         }
     }
 
-    // Try to get Content-Length
-    char szContentLength[32] = "";
-    DWORD dwBufLen = sizeof(szContentLength);
-    DWORD dwIndex = 0;
-    if (HttpQueryInfoA(hUrl, HTTP_QUERY_CONTENT_LENGTH, szContentLength, &dwBufLen, &dwIndex)) {
-        g_download_total = atol(szContentLength);
-    }
-
-    HANDLE hFile = CreateFileA(win_target_path, GENERIC_WRITE, 0, nullptr,
-        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    // 5. Open target file for writing
+    HANDLE hFile = CreateFileA(win_target_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile == INVALID_HANDLE_VALUE) {
-        DWORD err = GetLastError();
-        printf("[native_download_file] CreateFileA failed for target path: %s, error code: %lu\n", win_target_path, err);
-        InternetCloseHandle(hUrl); InternetCloseHandle(hInet); return -3;
+        InternetCloseHandle(hUrl);
+        InternetCloseHandle(hInternet);
+        return -3;
     }
 
-    char buf[65536];
-    DWORD read = 0, written = 0;
-    while (InternetReadFile(hUrl, buf, sizeof(buf), &read) && read > 0) {
-        WriteFile(hFile, buf, read, &written, nullptr);
-        g_download_received += read;
+    // 6. Stream file content in 64KB chunks
+    const DWORD BUFFER_SIZE = 65536;
+    BYTE* buffer = (BYTE*)malloc(BUFFER_SIZE);
+    if (!buffer) {
+        CloseHandle(hFile);
+        InternetCloseHandle(hUrl);
+        InternetCloseHandle(hInternet);
+        DeleteFileA(win_target_path);
+        return -4;
+    }
+
+    bool download_ok = true;
+    while (true) {
+        DWORD bytesRead = 0;
+        if (!InternetReadFile(hUrl, buffer, BUFFER_SIZE, &bytesRead)) {
+            download_ok = false;
+            break;
+        }
+        if (bytesRead == 0) {
+            // End of stream reached
+            break;
+        }
+
+        DWORD bytesWritten = 0;
+        if (!WriteFile(hFile, buffer, bytesRead, &bytesWritten, NULL) || bytesWritten != bytesRead) {
+            download_ok = false;
+            break;
+        }
+
+        g_download_received += bytesRead;
         if (g_download_total > 0) {
             g_download_progress = ((double)g_download_received / (double)g_download_total) * 100.0;
         }
-        read = 0;
+        if (g_download_progress > 99.0 && g_download_received < g_download_total) {
+            g_download_progress = 99.0;
+        }
     }
 
-    // Done
-    g_download_progress = 100.0;
+    free(buffer);
     CloseHandle(hFile);
     InternetCloseHandle(hUrl);
-    InternetCloseHandle(hInet);
-    return 0;
+    InternetCloseHandle(hInternet);
+
+    if (download_ok && g_download_received > 0) {
+        g_download_progress = 100.0;
+        return 0;
+    } else {
+        DeleteFileA(win_target_path);
+        return -5;
+    }
 }
 
 // ── Native unzip via Shell32 COM (IShellDispatch) ─────────────────────────────
@@ -233,6 +269,7 @@ LRESULT CALLBACK ChildWebViewWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
     }
     if (msg == WM_DESTROY) {
         if (self) {
+            self->is_initialized = false;
             if (self->controller) {
                 self->controller->Close();
                 self->controller->Release();
@@ -1765,10 +1802,10 @@ extern "C" {
         auto handler = new ExecuteScriptCompletedHandler(callback, ctx);
         HRESULT hr = self->webview->ExecuteScript(wscript, handler);
         delete[] wscript;
+        handler->Release();
         if (FAILED(hr)) {
             printf("[C++ DEBUG] ExecuteScript failed with hr=0x%lx\n", hr);
             callback(ctx, false, "{}");
-            handler->Release();
         }
     }
 

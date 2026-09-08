@@ -4343,21 +4343,60 @@ body.dark-mode .nav-btn:hover {
 #update-btn.update-btn-progress {
   width: auto;
   min-width: 78px;
-  padding: 8px 10px;
+  padding: 6px 12px;
   border-radius: 999px;
+  background-color: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  color: #3b82f6 !important;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
-#update-btn.update-btn-progress .update-badge {
+#update-btn.update-btn-ready {
+  width: auto;
+  min-width: 78px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  color: var(--accent-success, #22c55e) !important;
+  background-color: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+#update-btn.update-btn-progress .update-badge,
+#update-btn.update-btn-ready .update-badge {
   display: none;
 }
 
-#update-btn.update-btn-progress .update-btn-label {
+#update-btn.update-btn-progress .update-btn-label,
+#update-btn.update-btn-ready .update-btn-label {
   display: inline-flex !important;
 }
 
-#update-btn:hover {
-  background-color: rgba(34, 197, 94, 0.1);
-  /* Green tint on hover */
+.update-icon-shell .spin-animation {
+  animation: updateSpin 1.2s linear infinite;
+}
+
+.update-icon-shell .bounce-animation {
+  animation: updateBounce 1.5s ease-in-out infinite;
+}
+
+@keyframes updateSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes updateBounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(2px); }
+}
+
+#update-btn.update-btn-ready:hover {
+  background-color: rgba(34, 197, 94, 0.22);
+  border-color: rgba(34, 197, 94, 0.5);
+}
+
+#update-btn.update-btn-progress:hover {
+  background-color: rgba(59, 130, 246, 0.18);
 }
 
 /* Window Controls - Traffic Lights */

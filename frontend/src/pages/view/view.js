@@ -22,6 +22,7 @@ import { createViewSettingsManager } from "./view-settings.js";
 import { createViewExtensionsManager } from "./view-extensions.js";
 import { createViewCredentialsManager } from "./view-credentials.js";
 import { createViewTabsManager } from "./view-tabs.js";
+import { queryDataApi } from "../../lib/api-query.js";
 // import { loadUrlInWebview } from "../../lib/webview.js"; // view.js has its own logic currently
 
 /**
@@ -600,22 +601,11 @@ async function updateSynapseVisibility() {
   if (!currentEmpId) return;
 
   try {
-    const response = await fetch(
-      `${RESOURCE_SERVICE_BASE_URL}/api/list_of_users`,
-      {
-        signal: AbortSignal.timeout(5000),
-      },
+    const { data: users } = await queryDataApi(
+      "resources",
+      {},
+      { limit: 200, timeoutMs: 5000 },
     );
-    if (!response.ok) {
-      throw new Error(`API returned ${response.status}`);
-    }
-
-    const payload = await response.json();
-    const users = Array.isArray(payload)
-      ? payload
-      : Array.isArray(payload?.users)
-        ? payload.users
-        : [];
 
     const allowedEmpIds = new Set(
       users.map((user) => String(user?.emp_id ?? "").trim()).filter(Boolean),

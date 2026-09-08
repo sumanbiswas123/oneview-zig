@@ -544,6 +544,26 @@ export function initializeProfileMenu() {
     const fileInput = document.getElementById("profile-file-input");
     const profilePic = document.querySelector(".profile-pic");
 
+    if (checkUpdatesBtn) {
+      checkUpdatesBtn.addEventListener("click", () => {
+        closeProfileMenu();
+        if (typeof window.triggerManualSystemUpdateCheck === "function") {
+          window.triggerManualSystemUpdateCheck();
+        } else if (window.api?.checkForUpdates) {
+          showToast("Checking for OneView updates...", "info", 3000);
+          window.api.checkForUpdates().then((res) => {
+            if (res && res.updateAvailable) {
+              showToast(`Update v${res.latestVersion || ""} is available and downloading!`, "info", 5000);
+            } else {
+              showToast("OneView is already up to date.", "success", 4000);
+            }
+          }).catch((err) => {
+            showToast(err?.message || "Could not check for updates.", "error", 4000);
+          });
+        }
+      });
+    }
+
     // Load saved profile pic
     try {
       const saved = localStorage.getItem("userProfilePic");

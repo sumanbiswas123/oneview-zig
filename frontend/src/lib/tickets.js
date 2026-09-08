@@ -16,11 +16,10 @@ import defaultIcon from "../assets/task-icons/default.png";
 import veevaIcon from "../assets/veeva-icon.webp";
 
 import veevaBinderIcon from "../assets/veeva-binder-icon.webp";
+import { queryDataApi } from "./api-query.js";
 /**
  * Ticket data and rendering functionality
  */
-
-const hostname = "http://10.215.56.196:5000";
 
 function resolveTicketLinkPartition(url = "", title = "") {
   const lowerUrl = String(url || "").toLowerCase();
@@ -631,14 +630,19 @@ export async function fetchTickets() {
       return;
     }
 
-    const response = await fetch(`${hostname}/api/resources/${resourceId}`, {
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!response.ok) {
-      throw new Error(`API returned ${response.status}`);
-    }
+    const isNumericId = /^\d+$/.test(resourceId);
+    const filter = isNumericId
+      ? { emp_id: resourceId }
+      : resourceId.includes("@")
+        ? { resource_email_id: resourceId }
+        : { resource_name: resourceId };
 
-    const data = await response.json();
+    const { data: resources } = await queryDataApi("resources", filter, { timeoutMs: 8000 });
+    const data = resources[0] || null;
+    if (!data) {
+      renderTickets([]);
+      return;
+    }
 
     // Store employee name
     if (data.resource_name) {
@@ -667,18 +671,12 @@ export async function fetchTickets() {
       tickets,
       async (ticket) => {
         try {
-          const issueRes = await fetch(
-            `http://10.215.56.196:5000/api/resources/all-issues/${ticket.key}`,
-            {
-              signal: AbortSignal.timeout(5000),
-            },
+          const { data: issueRecords } = await queryDataApi(
+            "issues",
+            { key: ticket.key },
+            { timeoutMs: 5000 },
           );
-
-          if (!issueRes.ok) {
-            throw new Error(`Failed for ${ticket.key}`);
-          }
-
-          const issueData = await issueRes.json();
+          const issueData = issueRecords[0] || {};
 
           return {
             ...ticket,

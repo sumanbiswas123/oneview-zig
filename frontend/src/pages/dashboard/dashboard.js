@@ -31,6 +31,7 @@ import {
   RESOURCE_SERVICE_BASE_URL,
   isAppProtocolUrl,
 } from "../../lib/app-env.js";
+import { queryDataApi } from "../../lib/api-query.js";
 import { filterAppsForCurrentBuild } from "../../lib/app-catalog.js";
 import { PARTITIONS, STORAGE_KEYS } from "../../lib/app-runtime.js";
 import { initializeOneviewSharedStorageSync } from "../../lib/oneview-shared-storage.js";
@@ -170,7 +171,26 @@ async function ensureDashboardSystemUpdateCheck() {
     );
   }
   try {
-    await window.api.checkForUpdates();
+    const res = await window.api.checkForUpdates();
+    if (res && typeof res === "object") {
+      if (res.updateAvailable) {
+        const updateStatus = String(res.status || "available").trim();
+        applyDashboardUpdateStatus(
+          {
+            status: updateStatus,
+            version: res.latestVersion,
+            downloadUrl: res.downloadUrl,
+            percent: updateStatus === "downloaded" ? 100 : 0,
+          },
+          { announce: true },
+        );
+      } else {
+        applyDashboardUpdateStatus(
+          { status: "not-available", version: res.currentVersion },
+          { announce: true },
+        );
+      }
+    }
     // After system check, check for app updates too
     void scheduleDashboardBackgroundTask(checkInstalledAppsForUpdates, 2000);
   } catch (error) {
@@ -305,21 +325,16 @@ async function fetchDashboardUserInstallations({ force = false } = {}) {
 
   dashboardUserInstallationsPromise = (async () => {
     try {
-      const response = await fetch(
-        `${APP_SERVICE_BASE_URL}/api/user_data/${empId}`,
-        {
-          signal: AbortSignal.timeout(8000),
-        },
-      );
-      if (!response.ok) {
-        throw new Error(`User installations request failed with ${response.status}`);
-      }
+      const isNumericId = /^\d+$/.test(empId);
+      const filter = isNumericId ? { emp_id: empId } : {};
 
-      const data = await response.json();
-      dashboardUserInstallationsCache = data.installations || {};
+      const { data: records } = await queryDataApi("user-tracking", filter, { timeoutMs: 8000 });
+      const record = records[0] || {};
+      dashboardUserInstallationsCache = record.installations || {};
       dashboardUserInstallationsFetchedAt = Date.now();
       return dashboardUserInstallationsCache;
     } catch (error) {
+      dashboardUserInstallationsFetchedAt = Date.now();
       console.warn("Failed to fetch dashboard user installations", error);
       return dashboardUserInstallationsCache || {};
     } finally {
@@ -586,20 +601,11 @@ async function updateSynapseVisibility() {
   if (!currentEmpId) return;
 
   try {
-    const response = await fetch(`${hostname}/api/list_of_users`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!response.ok) {
-      throw new Error(`API returned ${response.status}`);
-    }
-
-    const payload = await response.json();
-    console.log("List of users payload:", payload);
-    const users = Array.isArray(payload)
-      ? payload
-      : Array.isArray(payload?.users)
-        ? payload.users
-        : [];
+    const { data: users } = await queryDataApi(
+      "resources",
+      {},
+      { limit: 200, timeoutMs: 5000 },
+    );
 
     const allowedEmpIds = new Set(
       users
@@ -754,21 +760,26 @@ async function triggerManualSystemUpdateCheck() {
     return;
   }
 
+  // 1. Immediately show checking status with spinner in topbar button
+  applyDashboardUpdateStatus({ status: "checking" }, { announce: false });
+
   let priorDownloadedVersion = "";
   try {
     const response = await window.api?.getCurrentUpdateStatus?.();
     const currentStatus = String(response?.state?.status || "").trim();
     const currentVersion = String(response?.state?.version || "").trim();
-    if (currentStatus === "downloaded") {
+    if (response?.state?.installerReady === true && currentStatus === "downloaded") {
       priorDownloadedVersion = currentVersion;
-    }
-    if (currentStatus === "available" || currentStatus === "progress") {
+      applyDashboardUpdateStatus(
+        { ...response.state, status: "downloaded", installerReady: true },
+        { announce: true }
+      );
       showToast(
         currentVersion
-          ? `Update v${currentVersion} is already downloading.`
-          : "An update is already downloading.",
-        "info",
-        5000,
+          ? `Update v${currentVersion} is already downloaded and ready to install.`
+          : "An update is already downloaded and ready to install.",
+        "success",
+        5000
       );
       return;
     }
@@ -780,21 +791,153 @@ async function triggerManualSystemUpdateCheck() {
     priorDownloadedVersion,
   };
   showToast("Checking for OneView updates...", "info", 3000);
+  startActiveUpdatePoller();
 
   try {
-    await window.api.checkForUpdates();
+    const res = await window.api.checkForUpdates();
+    if (res && typeof res === "object") {
+      if (res.updateAvailable) {
+        const updateStatus = String(res.status || "available").trim();
+        const isReady = updateStatus === "downloaded" || res.installerReady === true;
+        applyDashboardUpdateStatus(
+          {
+            status: isReady ? "downloaded" : updateStatus,
+            version: res.latestVersion || res.version,
+            downloadUrl: res.downloadUrl,
+            percent: isReady ? 100 : (typeof res.percent === "number" ? res.percent : 0),
+            installerReady: isReady,
+            received: res.received,
+            total: res.total,
+          },
+          { announce: true }
+        );
+        if (!isReady) {
+          startActiveUpdatePoller();
+        }
+      } else {
+        applyDashboardUpdateStatus(
+          { status: "not-available", version: res.currentVersion },
+          { announce: true }
+        );
+      }
+    }
   } catch (error) {
     pendingManualUpdateCheckFeedback = false;
     manualUpdateCheckContext = {
       pending: false,
       priorDownloadedVersion: "",
     };
+    applyDashboardUpdateStatus(
+      { status: "error", error: error?.message || "Could not check for updates" },
+      { announce: true }
+    );
     showToast(
       error?.message || "Could not check for updates right now.",
       "error",
-      5000,
+      5000
     );
   }
+}
+let activeUpdatePollTimer = null;
+
+function stopActiveUpdatePoller() {
+  if (activeUpdatePollTimer) {
+    clearInterval(activeUpdatePollTimer);
+    activeUpdatePollTimer = null;
+  }
+}
+
+let isFrontendDownloadingUpdate = false;
+
+async function startFrontendUpdateDownload(downloadUrl, version) {
+  if (isFrontendDownloadingUpdate || !downloadUrl) return;
+  isFrontendDownloadingUpdate = true;
+  applyDashboardUpdateStatus({ status: "progress", percent: 0, version }, { announce: false });
+
+  try {
+    const localAppData = (await window.api?.getLocalAppDataPath?.()) || "";
+    const baseDir = localAppData || "C:\\ProgramData";
+    const targetPath = `${baseDir}\\OneView\\updates\\OneViewSetup-v${version}.exe`;
+
+    // Tell backend to download via native WinINet API directly to targetPath
+    if (window.api?.downloadFile) {
+      let unlisten = null;
+      if (typeof window.api.onDownloadProgress === "function") {
+        unlisten = window.api.onDownloadProgress((progressData) => {
+          if (!progressData) return;
+          const pct = typeof progressData.progress === "number" ? progressData.progress : 0;
+          applyDashboardUpdateStatus(
+            {
+              status: "progress",
+              percent: pct,
+              version,
+              received: progressData.received,
+              total: progressData.total,
+            },
+            { announce: false }
+          );
+        });
+      }
+
+      startActiveUpdatePoller();
+      await window.api.downloadFile(downloadUrl, targetPath);
+      if (unlisten) unlisten();
+      stopActiveUpdatePoller();
+
+      // Instant transition to green install button
+      applyDashboardUpdateStatus(
+        { status: "downloaded", percent: 100, version, installerReady: true },
+        { announce: true }
+      );
+    }
+  } catch (err) {
+    console.error("Update download error:", err);
+    startActiveUpdatePoller();
+  } finally {
+    isFrontendDownloadingUpdate = false;
+  }
+}
+
+function startActiveUpdatePoller() {
+  if (activeUpdatePollTimer) return;
+  activeUpdatePollTimer = setInterval(async () => {
+    try {
+      let state = null;
+      if (window.api?.getCurrentUpdateStatus) {
+        const response = await window.api.getCurrentUpdateStatus();
+        state = response?.state;
+      }
+      if (!state) {
+        const r = await fetch("http://127.0.0.1:9731/api/app-update-status");
+        if (r.ok) {
+          const j = await r.json();
+          state = {
+            status: j.status,
+            percent: j.percent,
+            version: j.version,
+            error: j.error,
+            installerReady: j.installerReady,
+            received: j.received,
+            total: j.total,
+          };
+        }
+      }
+      if (!state) return;
+
+      const status = String(state.status || "").trim();
+      if (status) {
+        if (status === "downloaded" || state.installerReady === true || state.percent === 100) {
+          applyDashboardUpdateStatus({ ...state, status: "downloaded", installerReady: true }, { announce: true });
+          stopActiveUpdatePoller();
+        } else if (status === "progress" || status === "downloading" || status === "available") {
+          applyDashboardUpdateStatus(state, { announce: false });
+        } else if (status === "not-available" || status === "error" || status === "idle") {
+          applyDashboardUpdateStatus(state, { announce: false });
+          stopActiveUpdatePoller();
+        }
+      }
+    } catch (_e) {}
+  }, 250);
 }
 
 function applyDashboardUpdateStatus(payload = {}, { announce = false } = {}) {
@@ -810,13 +953,51 @@ function applyDashboardUpdateStatus(payload = {}, { announce = false } = {}) {
       ? Math.max(0, Math.min(100, Math.round(payload.percent)))
       : null;
 
-  const setUpdateButtonMode = ({ visible, progress = false, label = "" } = {}) => {
+  const iconShell = document.getElementById("update-icon-shell");
+
+  const setUpdateButtonMode = ({ visible, progress = false, ready = false, label = "" } = {}) => {
     btn.classList.toggle("hidden", !visible);
-    btn.style.display = visible ? "flex" : "none";
+    btn.style.display = visible ? "inline-flex" : "none";
     btn.classList.toggle("update-btn-progress", Boolean(progress));
+    btn.classList.toggle("update-btn-ready", Boolean(ready));
     if (btnLabel) {
       btnLabel.textContent = label;
-      btnLabel.classList.toggle("hidden", !progress || !label);
+      btnLabel.classList.toggle("hidden", (!progress && !ready) || !label);
+    }
+    if (iconShell) {
+      if (progress) {
+        // Modern spinner / animated download icon
+        iconShell.innerHTML = `
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="spin-animation">
+            <line x1="12" y1="2" x2="12" y2="6"></line>
+            <line x1="12" y1="18" x2="12" y2="22"></line>
+            <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
+            <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+            <line x1="2" y1="12" x2="6" y2="12"></line>
+            <line x1="18" y1="12" x2="22" y2="12"></line>
+            <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
+            <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
+          </svg>
+        `;
+      } else if (ready) {
+        // Clean ready-to-install tray download icon with bounce
+        iconShell.innerHTML = `
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="bounce-animation">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+        `;
+      } else {
+        // Default download icon
+        iconShell.innerHTML = `
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+        `;
+      }
     }
   };
 
@@ -850,10 +1031,13 @@ function applyDashboardUpdateStatus(payload = {}, { announce = false } = {}) {
   };
 
   if (status === "checking") {
+    btn.style.background = "";
+    btn.style.borderColor = "";
     setUpdateButtonMode({
       visible: true,
       progress: true,
-      label: "Checking",
+      ready: false,
+      label: "Checking...",
     });
     btn.onclick = null;
     btn.title = "Checking for updates...";
@@ -868,84 +1052,12 @@ function applyDashboardUpdateStatus(payload = {}, { announce = false } = {}) {
     return;
   }
 
-  if (status === "available" || status === "progress") {
-    const isManualLatestUpgrade = manualUpdateCheckContext.pending;
-    const priorDownloadedVersion = String(
-      manualUpdateCheckContext.priorDownloadedVersion || "",
-    ).trim();
-    const isAlreadyDownloadedManualResult =
-      pendingManualUpdateCheckFeedback &&
-      priorDownloadedVersion &&
-      version &&
-      priorDownloadedVersion === version;
-    if (isAlreadyDownloadedManualResult) {
-      pendingManualUpdateCheckFeedback = false;
-      pendingStartupUpdateCheckFeedback = false;
-      setUpdateButtonMode({ visible: true, progress: false, label: "" });
-      btn.title = `${updateLabel} ready - Click to install`;
-      btn.onclick = openInstallPrompt;
-      const downloadedMessage = `Update v${version} is already downloaded. Please install it.`;
-      if (announce) {
-        const downloadedToastKey = `downloaded:${version || "unknown"}`;
-        showToast(downloadedMessage, "info", 5000);
-        lastDashboardUpdateToastKey = downloadedToastKey;
-        dashboardUpdateToastSeenAt.set(downloadedToastKey, Date.now());
-        saveDashboardUpdateNotification({
-          title: "OneView Update",
-          message: downloadedMessage,
-          icon: "OK",
-          dedupeKey: `system-update:downloaded:${version || "unknown"}`,
-          replaceKey: "system-update",
-        });
-      }
-      manualUpdateCheckContext = {
-        pending: false,
-        priorDownloadedVersion: "",
-      };
-      return;
-    }
-    pendingManualUpdateCheckFeedback = false;
-    pendingStartupUpdateCheckFeedback = false;
-    setUpdateButtonMode({
-      visible: true,
-      progress: true,
-      label: progressPercent !== null ? `${progressPercent}%` : "Downloading",
-    });
-    btn.onclick = null;
-    btn.title = version
-      ? `Update v${version} is downloading automatically`
-      : "Update is downloading automatically";
-    if (announce) {
-      const downloadingMessage =
-        isManualLatestUpgrade && version
-          ? `Updating to the latest version v${version}. Downloading now.`
-          : version
-            ? `OneView update v${version} is available and downloading automatically.`
-            : "A OneView update is available and downloading automatically.";
-      if (isManualLatestUpgrade) {
-        showToast(downloadingMessage, "info", 5000);
-      } else {
-        showDashboardUpdateToastOnce(
-          downloadingMessage,
-          `downloading:${version || "unknown"}`,
-        );
-      }
-      saveDashboardUpdateNotification({
-        title: "OneView Update",
-        message: downloadingMessage,
-        icon: "UP",
-        dedupeKey: `system-update:available:${version || "unknown"}`,
-        replaceKey: "system-update",
-      });
-    }
-    manualUpdateCheckContext = {
-      pending: false,
-      priorDownloadedVersion: "",
-    };
-    return;
-  }
+  const isInstallerReady = Boolean(payload?.installerReady || status === "downloaded" || progressPercent === 100);
 
-  if (status === "downloaded") {
+  if (isInstallerReady) {
+    stopActiveUpdatePoller();
+    btn.style.background = "";
+    btn.style.borderColor = "";
     const priorDownloadedVersion = String(
       manualUpdateCheckContext.priorDownloadedVersion || "",
     ).trim();
@@ -955,8 +1067,8 @@ function applyDashboardUpdateStatus(payload = {}, { announce = false } = {}) {
       priorDownloadedVersion === version;
     pendingManualUpdateCheckFeedback = false;
     pendingStartupUpdateCheckFeedback = false;
-    setUpdateButtonMode({ visible: true, progress: false, label: "" });
-    btn.title = `${updateLabel} ready - Click to install`;
+    setUpdateButtonMode({ visible: true, progress: false, ready: true, label: "Restart & Install" });
+    btn.title = version ? `OneView v${version} ready - Click to Restart & Install` : `${updateLabel} ready - Click to install`;
     btn.onclick = openInstallPrompt;
     if (announce) {
       const downloadedMessage =
@@ -988,12 +1100,83 @@ function applyDashboardUpdateStatus(payload = {}, { announce = false } = {}) {
     return;
   }
 
-  if (status === "not-available") {
+  if (status === "available" || status === "progress" || status === "downloading") {
+    const isManualLatestUpgrade = manualUpdateCheckContext.pending;
+    pendingManualUpdateCheckFeedback = false;
     pendingStartupUpdateCheckFeedback = false;
-    setUpdateButtonMode({ visible: false, progress: false, label: "" });
+
+    let progressLabel = "Downloading...";
+    let progressTitle = version
+      ? `Update v${version} is downloading automatically`
+      : "Update is downloading automatically";
+
+    if (payload.received && payload.total && payload.total > 0) {
+      const recMb = (payload.received / (1024 * 1024)).toFixed(1);
+      const totMb = (payload.total / (1024 * 1024)).toFixed(1);
+      const pct = progressPercent !== null ? progressPercent : Math.max(0, Math.min(100, Math.round((payload.received / payload.total) * 100)));
+      progressLabel = `${pct}% (${recMb}/${totMb} MB)`;
+      progressTitle = `Downloading update v${version || ""}: ${pct}% (${recMb} MB / ${totMb} MB)`;
+    } else if (progressPercent !== null) {
+      progressLabel = `Downloading: ${progressPercent}%`;
+      progressTitle = `Downloading update v${version || ""}: ${progressPercent}%`;
+    }
+
+    setUpdateButtonMode({
+      visible: true,
+      progress: true,
+      ready: false,
+      label: progressLabel,
+    });
     btn.onclick = null;
-    if (pendingManualUpdateCheckFeedback) {
-      pendingManualUpdateCheckFeedback = false;
+    btn.title = progressTitle;
+
+    if (progressPercent !== null) {
+      btn.style.background = `linear-gradient(to right, rgba(59, 130, 246, 0.28) ${progressPercent}%, rgba(59, 130, 246, 0.08) ${progressPercent}%)`;
+      btn.style.borderColor = "rgba(59, 130, 246, 0.4)";
+    }
+
+    startActiveUpdatePoller();
+
+    if (announce) {
+      const downloadingMessage =
+        isManualLatestUpgrade && version
+          ? `Updating to the latest version v${version}. Downloading now.`
+          : version
+            ? `OneView update v${version} is available and downloading automatically.`
+            : "A OneView update is available and downloading automatically.";
+      if (isManualLatestUpgrade) {
+        showToast(downloadingMessage, "info", 5000);
+      } else {
+        showDashboardUpdateToastOnce(
+          downloadingMessage,
+          `downloading:${version || "unknown"}`,
+        );
+      }
+      saveDashboardUpdateNotification({
+        title: "OneView Update",
+        message: downloadingMessage,
+        icon: "UP",
+        dedupeKey: `system-update:available:${version || "unknown"}`,
+        replaceKey: "system-update",
+      });
+    }
+    manualUpdateCheckContext = {
+      pending: false,
+      priorDownloadedVersion: "",
+    };
+    return;
+  }
+
+  if (status === "not-available") {
+    stopActiveUpdatePoller();
+    btn.style.background = "";
+    btn.style.borderColor = "";
+    const wasChecking = pendingManualUpdateCheckFeedback || pendingStartupUpdateCheckFeedback;
+    pendingStartupUpdateCheckFeedback = false;
+    pendingManualUpdateCheckFeedback = false;
+    setUpdateButtonMode({ visible: false, progress: false, ready: false, label: "" });
+    btn.onclick = null;
+    if (wasChecking) {
       showToast("OneView is already updated to the latest version.", "success", 4000);
     }
     manualUpdateCheckContext = {
@@ -1004,15 +1187,19 @@ function applyDashboardUpdateStatus(payload = {}, { announce = false } = {}) {
   }
 
   if (status === "error") {
+    stopActiveUpdatePoller();
+    btn.style.background = "";
+    btn.style.borderColor = "";
+    const wasManual = pendingManualUpdateCheckFeedback;
     pendingManualUpdateCheckFeedback = false;
     pendingStartupUpdateCheckFeedback = false;
     manualUpdateCheckContext = {
       pending: false,
       priorDownloadedVersion: "",
     };
-    setUpdateButtonMode({ visible: false, progress: false, label: "" });
+    setUpdateButtonMode({ visible: false, progress: false, ready: false, label: "" });
     btn.onclick = null;
-    if (announce && payload?.error) {
+    if ((announce || wasManual) && payload?.error) {
       showDashboardUpdateToastOnce(
         `Update check failed: ${payload.error}`,
         `error:${payload.error}`,
@@ -1028,7 +1215,10 @@ function applyDashboardUpdateStatus(payload = {}, { announce = false } = {}) {
     return;
   }
 
-  setUpdateButtonMode({ visible: false, progress: false, label: "" });
+  stopActiveUpdatePoller();
+  btn.style.background = "";
+  btn.style.borderColor = "";
+  setUpdateButtonMode({ visible: false, progress: false, ready: false, label: "" });
   btn.onclick = null;
 }
 
@@ -1830,18 +2020,56 @@ window.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  if (window.api?.getCurrentUpdateStatus) {
+  if (window.api?.onUpdateStatus) {
+    window.api.onUpdateStatus((arg1, arg2) => {
+      const payload = (arg2 && typeof arg2 === "object")
+        ? arg2
+        : (arg1 && typeof arg1 === "object")
+          ? arg1
+          : { status: arg1 };
+      applyDashboardUpdateStatus(payload, { announce: true });
+    });
+  }
+
+  let lastLiveUpdateCheckTime = 0;
+
+  const syncCurrentUpdateStatus = (announce = false) => {
+    if (!window.api?.getCurrentUpdateStatus) return;
     window.api
       .getCurrentUpdateStatus()
       .then((response) => {
         if (response?.state?.status) {
-          applyDashboardUpdateStatus(response.state, { announce: false });
+          applyDashboardUpdateStatus(response.state, { announce });
         }
       })
       .catch((error) => {
         console.warn("Could not restore current update status", error);
       });
-  }
+
+    // Automatically re-query GitHub if 60 seconds have passed since last check
+    const now = Date.now();
+    if (now - lastLiveUpdateCheckTime > 60000 && window.api?.checkForUpdates) {
+      lastLiveUpdateCheckTime = now;
+      window.api.checkForUpdates().then((res) => {
+        if (res && res.updateAvailable) {
+          applyDashboardUpdateStatus({
+            status: res.status || "available",
+            version: res.latestVersion,
+            downloadUrl: res.downloadUrl,
+            percent: res.status === "downloaded" ? 100 : 0,
+          }, { announce: false });
+        }
+      }).catch(() => {});
+    }
+  };
+
+  // Check update status once on dashboard startup
+  syncCurrentUpdateStatus(false);
+
+  // Periodic silent check for new releases every 2 hours in the background (no toasts, purely background state update)
+  setInterval(() => {
+    syncCurrentUpdateStatus(false);
+  }, 7200000);
 
   // Load initial data
   if (!isGuestMode()) {
@@ -2161,16 +2389,13 @@ window.addEventListener("DOMContentLoaded", () => {
   async function loadAppsForFeedback() {
     console.log("trial");
     try {
-      // Fetch user's installations from API (returns array of user objects)
-      const userDataRes = await fetch(`${APP_SERVICE_BASE_URL}/api/user_data/`+ userId, {
-        signal: AbortSignal.timeout(5000),
-      });
-      
-      if (!userDataRes.ok) throw new Error(`User data API returned ${userDataRes.status}`);
-      const userDataArray = await userDataRes.json();
-    
-      
-      const installations = userDataArray?.installations || {};
+      // Fetch user's installations from consolidated API
+      const isNumeric = /^\d+$/.test(userId);
+      const filter = isNumeric ? { emp_id: userId } : {};
+
+      const { data: records } = await queryDataApi("user-tracking", filter, { timeoutMs: 5000 });
+      const record = records[0] || {};
+      const installations = record.installations || {};
       
       // Fetch app catalog from GitHub
       const catalogRes = await fetch(EXTENSIONS_RELEASES_URL, {
@@ -2725,20 +2950,17 @@ async function loadUserGreeting() {
     return;
   }
 
-  // Only fetch if hostname is defined and username is valid
-  if (!hostname) {
-    console.warn("hostname not defined, skipping greeting fetch");
-    greetingEl.textContent = `Hi, ${username}!`;
-    return;
-  }
-
-  // Fetch resource by numeric user id
+  // Fetch resource by numeric user id or username
   try {
-    const res = await fetch(`${hostname}/api/resources/${username}`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) throw new Error(`API returned ${res.status}`);
-    const data = await res.json();
+    const isNumericId = /^\d+$/.test(username);
+    const filter = isNumericId
+      ? { emp_id: username }
+      : username.includes("@")
+        ? { resource_email_id: username }
+        : { resource_name: username };
+
+    const { data: resources } = await queryDataApi("resources", filter, { timeoutMs: 5000 });
+    const data = resources[0] || null;
     cacheTrackedUserRole(data);
     const fullName =
       data &&
@@ -4295,14 +4517,6 @@ window.loadAppStore = loadAppStore;
 window.openWebviewWithPartition = openWebviewWithPartition;
 window.showDashboardHome = showDashboardHome;
 window.triggerManualSystemUpdateCheck = triggerManualSystemUpdateCheck;
-
-// --- Auto-Update Listener ---
-if (window.api && window.api.on) {
-  window.api.on("update-status", (payload) => {
-    console.log("Update Status:", payload);
-    applyDashboardUpdateStatus(payload, { announce: true });
-  });
-}
 
 if (window.api && window.api.onAppRemoved) {
   window.api.onAppRemoved(({ appId }) => {

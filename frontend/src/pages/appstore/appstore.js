@@ -9,6 +9,7 @@ import {
   EXTENSIONS_RELEASES_URL,
   IS_DEV_APP_BUILD,
 } from "../../lib/app-env.js";
+import { queryDataApi } from "../../lib/api-query.js";
 import { filterAppsForCurrentBuild } from "../../lib/app-catalog.js";
 import { SESSION_KEYS, STORAGE_KEYS } from "../../lib/app-runtime.js";
 import {
@@ -210,18 +211,12 @@ async function fetchUserInstallations({ force = false } = {}) {
 
   state.userInstallationsPromise = (async () => {
     try {
-      const response = await fetch(
-        `${APP_SERVICE_BASE_URL}/api/user_data/${empId}`,
-        {
-          signal: AbortSignal.timeout(8000),
-        },
-      );
-      if (!response.ok) {
-        throw new Error(`User installations request failed with ${response.status}`);
-      }
+      const isNumericId = /^\d+$/.test(empId);
+      const filter = isNumericId ? { emp_id: empId } : {};
 
-      const data = await response.json();
-      state.userInstallationsCache = data.installations || {};
+      const { data: records } = await queryDataApi("user-tracking", filter, { timeoutMs: 8000 });
+      const record = records[0] || {};
+      state.userInstallationsCache = record.installations || {};
       state.userInstallationsFetchedAt = Date.now();
       return state.userInstallationsCache;
     } catch (error) {
@@ -703,12 +698,13 @@ async function renderApps(apps) {
 
   try {
     const emp_id = localStorage.getItem("username");
-    const url = `${APP_SERVICE_BASE_URL}/api/user_data/${emp_id}`;
-    const res = await fetch(url);
+    if (emp_id) {
+      const isNumericId = /^\d+$/.test(emp_id);
+      const filter = isNumericId ? { emp_id } : {};
 
-    if (res.ok) {
-      const data = await res.json();
-      userInstallations = data.installations || {};
+      const { data: records } = await queryDataApi("user-tracking", filter, { timeoutMs: 5000 });
+      const record = records[0] || {};
+      userInstallations = record.installations || {};
     }
   } catch (err) {
     console.error("Failed to fetch user installations", err);
@@ -1919,6 +1915,8 @@ async function installApp(app, options = {}) {
         if (confirmed) {
           if (isDownloaded) {
             window.api.installUpdate();
+          } else if (typeof window.triggerManualSystemUpdateCheck === "function") {
+            window.triggerManualSystemUpdateCheck();
           } else {
             window.api.checkForUpdates();
           }

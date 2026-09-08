@@ -1,6 +1,6 @@
 [Setup]
 AppName=OneView
-AppVersion=1.2.7
+AppVersion=1.3.9
 AppPublisher=WPP
 AppPublisherURL=https://wpp.com
 PrivilegesRequired=lowest
@@ -9,7 +9,7 @@ DefaultDirName={localappdata}\OneView
 DisableDirPage=yes
 DisableReadyPage=yes
 DisableProgramGroupPage=yes
-DisableWelcomePage=no
+DisableWelcomePage=yes
 DisableFinishedPage=yes
 CreateUninstallRegKey=yes
 Uninstallable=yes
@@ -23,12 +23,13 @@ SolidCompression=yes
 WizardStyle=modern
 
 ; Automatically force close the running application without prompting the user
-CloseApplications=no
+CloseApplications=force
 RestartApplications=no
+CloseApplicationsFilter=*oneview.exe*
 
 [Files]
-Source: "zig-out\bin\oneview.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "zig-out\bin\oneview.exe"; DestDir: "{app}"; Flags: ignoreversion restartreplace
+Source: "WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion restartreplace
 Source: "ui\*"; DestDir: "{app}\ui"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
@@ -73,17 +74,29 @@ Root: HKLM; Subkey: "Software\OneView\Capabilities\FileAssociations"; ValueType:
 Filename: "{app}\oneview.exe"; Description: "Launch OneView"; Flags: nowait
 
 [UninstallRun]
-Filename: "taskkill.exe"; Parameters: "/f /im oneview.exe"; Flags: runhidden waituntilterminated
+Filename: "taskkill.exe"; Parameters: "/f /im oneview.exe /t"; Flags: runhidden waituntilterminated
 
 [Code]
-function InitializeSetup(): Boolean;
+procedure KillRunningApp();
 var
   ResultCode: Integer;
 begin
+  Exec('taskkill.exe', '/f /im oneview.exe /t', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(500);
+end;
+
+function InitializeSetup(): Boolean;
+begin
   Result := True;
-  
-  // Force close any running oneview.exe process immediately before starting setup
-  Exec('taskkill.exe', '/f /im oneview.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  KillRunningApp();
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssInstall then
+  begin
+    KillRunningApp();
+  end;
 end;
 
 procedure CurPageChanged(CurPageID: Integer);

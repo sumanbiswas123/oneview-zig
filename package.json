@@ -1,15 +1,18 @@
 {
   "name": "oneview-suite",
-  "version": "1.2.7",
+  "version": "1.3.9",
   "description": "OneView Suite compile & package scripts",
   "scripts": {
+    "sync:version": "node scripts/sync-version.js",
     "clean": "node -e \"require('fs').rmSync('ui', {recursive: true, force: true})\"",
     "build:frontend": "npm run vite:build --prefix frontend",
     "build:zig": "zig build",
     "build:zig:release": "zig build -Doptimize=ReleaseFast",
     "build:setup": "node -e \"const {execSync} = require('child_process'); const fs = require('fs'); const path = require('path'); const os = require('os'); const paths = ['C:\\\\Program Files (x86)\\\\Inno Setup 6\\\\ISCC.exe', 'C:\\\\Program Files\\\\Inno Setup 6\\\\ISCC.exe', path.join(os.homedir(), 'AppData\\\\Local\\\\Programs\\\\Inno Setup 6\\\\ISCC.exe')]; const iscc = paths.find(p => fs.existsSync(p)) || 'iscc'; execSync(`\\\"${iscc}\\\" oneview.iss`, {stdio: 'inherit'});\"",
-    "build:all": "npm run clean && npm run build:frontend && npm run build:zig && npm run build:setup",
-    "build:release": "npm run clean && npm run build:frontend && npm run build:zig:release && npm run build:setup",
-    "build": "npm run build:all"
+    "build:all": "npm run sync:version && npm run clean && npm run build:frontend && npm run build:zig && npm run build:setup",
+    "build:release": "npm run sync:version && npm run clean && npm run build:frontend && npm run build:zig:release && npm run build:setup",
+    "build": "npm run build:all",
+    "publish:github": "npm run sync:version && node scripts/publish-github.js",
+    "release": "npm run build:release && npm run publish:github"
   }
 }

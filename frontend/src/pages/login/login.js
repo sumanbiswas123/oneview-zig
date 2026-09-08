@@ -1,4 +1,5 @@
-import "../../components/titlebar/titlebar.js";
+
+import "../../components/titlebar/titlebar.js";
 import { APP_DISPLAY_NAME, PROD_SERVICE_BASE_URL, DEV_ACCESS_LIST_URL, QC_ACCESS_LIST_URL, IS_DEV_APP_BUILD } from "../../lib/app-env.js";
 import { STORAGE_KEYS } from "../../lib/app-runtime.js";
 import { showToast } from "../../lib/notifications.js";
@@ -838,9 +839,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
-    if (!connectivityCheckedAt || Date.now() - connectivityCheckedAt > 15000) {
-      await updateConnectivityStatus();
-    }
+    // Fast-path: proceed directly to login without blocking on pre-flight pings
     markStartup("login:submit", {
       usernameLength: String(username || "").length,
     });

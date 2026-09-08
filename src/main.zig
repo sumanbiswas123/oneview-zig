@@ -1,5 +1,6 @@
 const std = @import("std");
 const Webview = @import("webview").Webview;
+const APP_VERSION = @import("version.zig").APP_VERSION;
 
 const EasyApp = Webview.Easy(App);
 
@@ -64,7 +65,7 @@ fn stripPort(domain: []const u8) []const u8 {
 
 
 // ─── Native file operations (WinINet download, Shell32 unzip, SHFileOperation delete) ──
-extern "c" fn native_download_file(url: [*:0]const u8, target_path: [*:0]const u8) c_int;
+extern "c" fn native_download_file(url: [*:0]const u8, target_path: [*:0]const u8, expected_size: u32) c_int;
 extern "c" fn native_unzip_file(zip_path: [*:0]const u8, extract_path: [*:0]const u8) c_int;
 extern "c" fn native_delete_path(path: [*:0]const u8) c_int;
 extern "c" fn get_native_download_progress(progress: *f64, received: *u32, total: *u32, target_path: [*]u8, max_len: c_int) void;
@@ -990,6 +991,21 @@ fn populateStaticFilesCache(allocator: std.mem.Allocator) !void {
     g_static_files = map;
 }
 
+fn isVersionGreater(remote: []const u8, local: []const u8) bool {
+    var r_it = std.mem.splitScalar(u8, remote, '.');
+    var l_it = std.mem.splitScalar(u8, local, '.');
+    while (true) {
+        const r_part = r_it.next();
+        const l_part = l_it.next();
+        if (r_part == null and l_part == null) break;
+        const r_num = if (r_part) |p| (std.fmt.parseInt(u32, p, 10) catch 0) else 0;
+        const l_num = if (l_part) |p| (std.fmt.parseInt(u32, p, 10) catch 0) else 0;
+        if (r_num > l_num) return true;
+        if (r_num < l_num) return false;
+    }
+    return false;
+}
+
 const ConnCtx = struct { sock: usize, allocator: std.mem.Allocator };
 
 fn handleConnection(ctx: ConnCtx) void {
@@ -1073,6 +1089,10 @@ fn handleConnection(ctx: ConnCtx) void {
                         std.mem.eql(u8, url_path, "/api/open-default-app-settings") or
                         std.mem.eql(u8, url_path, "/api/get-default-open-handling-status") or
                         std.mem.eql(u8, url_path, "/api/check-for-updates") or
+                        std.mem.eql(u8, url_path, "/api/app-update-status") or
+                        std.mem.eql(u8, url_path, "/api/set-app-update-status") or
+                        std.mem.eql(u8, url_path, "/api/download-app-update") or
+                        std.mem.eql(u8, url_path, "/api/install-app-update") or
                         std.mem.eql(u8, url_path, "/api/download-file") or
                         std.mem.eql(u8, url_path, "/api/unzip-file") or
                         std.mem.eql(u8, url_path, "/api/delete-path") or
@@ -1170,7 +1190,7 @@ fn handleConnection(ctx: ConnCtx) void {
 
     // Route: /api/app-version — returns the current OneView app version
     if (std.mem.eql(u8, url_path, "/api/app-version")) {
-        sendJson(ctx.sock, "{\"version\":\"1.2.7\"}");
+        sendJson(ctx.sock, "{\"version\":\"" ++ APP_VERSION ++ "\"}");
         return;
     }
 
@@ -1236,8 +1256,8 @@ fn handleConnection(ctx: ConnCtx) void {
         };
 
         const resp = std.fmt.allocPrint(allocator,
-            "{{\"success\":true,\"startup\":{{\"path\":\"{s}\",\"lines\":{s}}},\"perf\":{{\"path\":\"{s}\",\"enabled\":true,\"lines\":[]}},\"app\":{{\"version\":\"1.2.7\",\"packaged\":true,\"pid\":{d}}}}}",
-            .{ log_path_esc, lines_json.items, log_path_esc, kernel32_pid.GetCurrentProcessId() }
+            "{{\"success\":true,\"startup\":{{\"path\":\"{s}\",\"lines\":{s}}},\"perf\":{{\"path\":\"{s}\",\"enabled\":true,\"lines\":[]}},\"app\":{{\"version\":\"{s}\",\"packaged\":true,\"pid\":{d}}}}}",
+            .{ log_path_esc, lines_json.items, log_path_esc, APP_VERSION, kernel32_pid.GetCurrentProcessId() }
         ) catch "{\"success\":false}";
         defer if (resp.ptr != "{\"success\":false}".ptr) allocator.free(resp);
         sendJson(ctx.sock, resp);
@@ -1305,25 +1325,242 @@ fn handleConnection(ctx: ConnCtx) void {
 
     // Route: /api/check-for-updates
     if (std.mem.eql(u8, url_path, "/api/check-for-updates")) {
-        const policy_raw = httpGetWinINet(allocator, "https://raw.githubusercontent.com/dikshantgoel-WPP/automation-store/refs/heads/main/update.json");
-        if (policy_raw) |raw| {
+        // Verify disk existence: if file is not on disk, reset downloaded/downloading flags
+        var file_on_disk = false;
+        if (g_update_installer_path) |p| {
+            if (allocator.dupeZ(u8, p)) |pz| {
+                defer allocator.free(pz);
+                if (fopen(pz, "rb")) |fh| {
+                    _ = fseek(fh, 0, 2);
+                    const sz: usize = @intCast(ftell(fh));
+                    _ = fclose(fh);
+                    if (sz > 1000000) file_on_disk = true;
+                }
+            } else |_| {}
+        }
+        if (!file_on_disk) {
+            g_update_status = "idle";
+            g_update_percent = 0.0;
+            g_update_received = 0;
+            g_update_total = 0;
+            g_update_installer_path = null;
+            g_update_downloading = false;
+            g_silent_update_ready = false;
+            g_new_exe_path = null;
+            g_update_error = null;
+        }
+
+        if (g_update_downloading or (std.mem.eql(u8, g_update_status, "downloaded") and file_on_disk)) {
+            const resp = std.fmt.allocPrint(allocator,
+                "{{\"success\":true,\"updateAvailable\":true,\"status\":\"{s}\",\"currentVersion\":\"{s}\",\"latestVersion\":\"{s}\",\"downloadUrl\":\"{s}\"}}",
+                .{ g_update_status, APP_VERSION, g_update_version orelse APP_VERSION, g_update_download_url orelse "" }
+            ) catch {
+                sendJson(ctx.sock, "{\"success\":true,\"updateAvailable\":true}");
+                return;
+            };
+            defer allocator.free(resp);
+            sendJson(ctx.sock, resp);
+            return;
+        }
+
+        g_update_status = "checking";
+        triggerWebviewUpdateStatus(null, "checking", 0.0, null);
+
+        const release_raw = fetchGitHubLatestRelease(allocator);
+        if (release_raw) |raw| {
             defer allocator.free(raw);
             if (std.json.parseFromSlice(std.json.Value, allocator, raw, .{})) |parsed| {
                 defer parsed.deinit();
-                const obj = parsed.value.object;
-                const remote_version = if (obj.get("version")) |v| v.string else "1.2.7";
-                const is_update_available = !std.mem.eql(u8, remote_version, "1.2.7");
-                
-                const resp = std.fmt.allocPrint(allocator,
-                    "{{\"success\":true,\"updateAvailable\":{},\"currentVersion\":\"1.2.7\",\"latestVersion\":\"{s}\"}}",
-                    .{ is_update_available, remote_version }
-                ) catch "{\"success\":true,\"updateAvailable\":false,\"currentVersion\":\"1.2.7\",\"latestVersion\":\"1.2.7\"}";
-                defer if (!std.mem.startsWith(u8, resp, "{\"success\":true,\"updateAvailable\":false")) allocator.free(resp);
-                sendJson(ctx.sock, resp);
-                return;
+
+                var release_obj: ?std.json.ObjectMap = null;
+                if (parsed.value == .object) {
+                    release_obj = parsed.value.object;
+                } else if (parsed.value == .array and parsed.value.array.items.len > 0) {
+                    if (parsed.value.array.items[0] == .object) {
+                        release_obj = parsed.value.array.items[0].object;
+                    }
+                }
+
+                if (release_obj) |obj| {
+                    var remote_ver: []const u8 = "";
+                    if (obj.get("tag_name")) |t| {
+                        remote_ver = t.string;
+                    } else if (obj.get("version")) |v| {
+                        remote_ver = v.string;
+                    }
+                    if (std.mem.startsWith(u8, remote_ver, "v") or std.mem.startsWith(u8, remote_ver, "V")) {
+                        remote_ver = remote_ver[1..];
+                    }
+
+                    const is_update_available = remote_ver.len > 0 and isVersionGreater(remote_ver, APP_VERSION);
+                    g_update_available = is_update_available;
+
+                    var download_url: ?[]const u8 = null;
+                    var download_size: u32 = 0;
+                    if (obj.get("assets")) |assets_val| {
+                        if (assets_val == .array) {
+                            for (assets_val.array.items) |asset_item| {
+                                if (asset_item == .object) {
+                                    const asset_name = if (asset_item.object.get("name")) |an| an.string else "";
+                                    if (std.mem.endsWith(u8, asset_name, ".exe")) {
+                                        if (asset_item.object.get("browser_download_url")) |burl| {
+                                            download_url = burl.string;
+                                            if (asset_item.object.get("size")) |sval| {
+                                                if (sval == .integer) {
+                                                    download_size = @intCast(sval.integer);
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (download_url == null) {
+                        if (obj.get("url")) |u| download_url = u.string;
+                    }
+
+                    if (is_update_available) {
+                        g_update_version = allocator.dupe(u8, remote_ver) catch remote_ver;
+                        if (download_url) |url| {
+                            g_update_download_url = allocator.dupe(u8, url) catch url;
+                            startAppUpdateDownload(allocator, url, remote_ver, download_size);
+                        } else {
+                            g_update_status = "available";
+                            triggerWebviewUpdateStatus(null, "available", 0.0, remote_ver);
+                        }
+                    } else {
+                        g_update_status = "not-available";
+                        triggerWebviewUpdateStatus(null, "not-available", 0.0, APP_VERSION);
+                    }
+
+                    const durl_str = download_url orelse "";
+                    const resp = std.fmt.allocPrint(allocator,
+                        "{{\"success\":true,\"updateAvailable\":{},\"status\":\"{s}\",\"installerReady\":{},\"currentVersion\":\"{s}\",\"latestVersion\":\"{s}\",\"downloadUrl\":\"{s}\"}}",
+                        .{ is_update_available, g_update_status, g_update_installer_path != null, APP_VERSION, remote_ver, durl_str }
+                    ) catch "{\"success\":true,\"updateAvailable\":false,\"currentVersion\":\"" ++ APP_VERSION ++ "\",\"latestVersion\":\"" ++ APP_VERSION ++ "\"}";
+                    defer if (!std.mem.startsWith(u8, resp, "{\"success\":true,\"updateAvailable\":false")) allocator.free(resp);
+                    sendJson(ctx.sock, resp);
+                    return;
+                }
             } else |_| {}
         }
-        sendJson(ctx.sock, "{\"success\":true,\"updateAvailable\":false,\"currentVersion\":\"1.2.7\",\"latestVersion\":\"1.2.7\"}");
+        g_update_status = "not-available";
+        triggerWebviewUpdateStatus(null, "not-available", 0.0, APP_VERSION);
+        sendJson(ctx.sock, "{\"success\":true,\"updateAvailable\":false,\"currentVersion\":\"" ++ APP_VERSION ++ "\",\"latestVersion\":\"" ++ APP_VERSION ++ "\"}");
+        return;
+    }
+
+    // Route: /api/app-update-status
+    if (std.mem.eql(u8, url_path, "/api/app-update-status")) {
+        const v = g_update_version orelse APP_VERSION;
+        const err_str = g_update_error orelse "";
+        
+        // Dynamically verify if installer actually exists on disk
+        var installer_ready = false;
+        if (g_update_installer_path) |p| {
+            if (allocator.dupeZ(u8, p)) |pz| {
+                defer allocator.free(pz);
+                if (fopen(pz, "rb")) |fh| {
+                    _ = fseek(fh, 0, 2);
+                    const sz: usize = @intCast(ftell(fh));
+                    _ = fclose(fh);
+                    if (sz > 1000000) {
+                        installer_ready = true;
+                    }
+                }
+            } else |_| {}
+        }
+        
+        // If memory says downloaded but file was deleted, reset status
+        if (std.mem.eql(u8, g_update_status, "downloaded") and !installer_ready) {
+            g_update_status = "available";
+            g_update_percent = 0.0;
+            g_update_received = 0;
+            g_update_total = 0;
+            g_update_installer_path = null;
+            g_silent_update_ready = false;
+            g_new_exe_path = null;
+        }
+
+        const resp = std.fmt.allocPrint(allocator,
+            "{{\"success\":true,\"status\":\"{s}\",\"percent\":{d:.1},\"version\":\"{s}\",\"error\":\"{s}\",\"installerReady\":{},\"received\":{d},\"total\":{d}}}",
+            .{ g_update_status, g_update_percent, v, err_str, installer_ready, g_update_received, g_update_total }
+        ) catch "{\"success\":true,\"status\":\"idle\",\"percent\":0.0,\"installerReady\":false,\"received\":0,\"total\":0}";
+        defer if (!std.mem.eql(u8, resp, "{\"success\":true,\"status\":\"idle\",\"percent\":0.0,\"installerReady\":false,\"received\":0,\"total\":0}")) allocator.free(resp);
+        sendJson(ctx.sock, resp);
+        return;
+    }
+
+    // Route: /api/set-app-update-status
+    if (std.mem.eql(u8, url_path, "/api/set-app-update-status")) {
+        const body_start_s = std.mem.indexOf(u8, request, "\r\n\r\n") orelse request.len;
+        const body_s = if (body_start_s + 4 < request.len) request[body_start_s + 4 ..] else "";
+        var parsed_s = std.json.parseFromSlice(std.json.Value, allocator, body_s, .{}) catch {
+            sendJson(ctx.sock, "{\"success\":false}");
+            return;
+        };
+        defer parsed_s.deinit();
+
+        if (parsed_s.value.object.get("status")) |st| {
+            if (std.mem.eql(u8, st.string, "downloaded")) {
+                g_update_status = "downloaded";
+                g_update_percent = 100.0;
+            } else if (std.mem.eql(u8, st.string, "progress")) {
+                g_update_status = "progress";
+            }
+        }
+        if (parsed_s.value.object.get("percent")) |pct| {
+            if (pct == .float) g_update_percent = pct.float;
+            if (pct == .integer) g_update_percent = @floatFromInt(pct.integer);
+        }
+        if (parsed_s.value.object.get("version")) |ver| {
+            g_update_version = allocator.dupe(u8, ver.string) catch ver.string;
+            const localappdata = getEnvVar(allocator, "LOCALAPPDATA");
+            defer if (localappdata.len > 0) allocator.free(localappdata);
+            const base_dir = if (localappdata.len > 0) localappdata else "C:\\ProgramData";
+            const update_dir = std.fs.path.join(allocator, &.{ base_dir, "OneView", "updates" }) catch null;
+            if (update_dir) |ud| {
+                defer allocator.free(ud);
+                g_update_installer_path = std.fmt.allocPrint(allocator, "{s}\\OneViewSetup-v{s}.exe", .{ ud, ver.string }) catch null;
+            }
+        }
+        sendJson(ctx.sock, "{\"success\":true}");
+        return;
+    }
+
+    // Route: /api/download-app-update
+    if (std.mem.eql(u8, url_path, "/api/download-app-update")) {
+        if (g_update_download_url) |url| {
+            const v = g_update_version orelse "1.2.8";
+            startAppUpdateDownload(allocator, url, v, 0);
+            sendJson(ctx.sock, "{\"success\":true,\"message\":\"Download started\"}");
+        } else {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"No update download URL available\"}");
+        }
+        return;
+    }
+
+    // Route: /api/install-app-update
+    if (std.mem.eql(u8, url_path, "/api/install-app-update")) {
+        if (g_update_installer_path) |installer_path| {
+            if (executeUpdateInstaller(allocator, installer_path)) {
+                sendJson(ctx.sock, "{\"success\":true,\"message\":\"Installer launched\"}");
+            } else {
+                // Installer missing or failed to launch -> reset and prompt re-download
+                g_update_status = "available";
+                g_update_percent = 0.0;
+                g_update_received = 0;
+                g_update_total = 0;
+                g_update_installer_path = null;
+                g_silent_update_ready = false;
+                g_new_exe_path = null;
+                sendJson(ctx.sock, "{\"success\":false,\"message\":\"Installer missing on disk. Re-downloading.\"}");
+            }
+        } else {
+            sendJson(ctx.sock, "{\"success\":false,\"message\":\"No installer downloaded yet\"}");
+        }
         return;
     }
 
@@ -1413,7 +1650,7 @@ fn handleConnection(ctx: ConnCtx) void {
         const path_z = allocator.dupeZ(u8, path_val.string) catch { allocator.free(url_z); sendJson(ctx.sock, "{\"success\":false,\"message\":\"OOM\"}"); return; };
         defer allocator.free(url_z);
         defer allocator.free(path_z);
-        const rc = native_download_file(url_z, path_z);
+        const rc = native_download_file(url_z, path_z, 0);
         if (rc == 0) {
             sendJson(ctx.sock, "{\"success\":true}");
         } else {
@@ -3209,7 +3446,10 @@ fn nativeWebcontentCall(req: EasyApp.Request) anyerror!void {
     defer parsed.deinit();
     
     const root_arr = parsed.value.array;
-    if (root_arr.items.len < 2) return;
+    if (root_arr.items.len < 2) {
+        req.resolveWith("{\"success\":false,\"message\":\"Invalid request arguments\"}");
+        return;
+    }
     const method = root_arr.items[0].string;
     const payload = root_arr.items[1].object;
 
@@ -3524,6 +3764,7 @@ fn nativeWebcontentCall(req: EasyApp.Request) anyerror!void {
 
     const key = if (payload.get("key")) |k| k.string else {
         std.debug.print("IPC: method={s}, key=<missing, skipping>\n", .{method});
+        req.resolveWith("{\"success\":false,\"message\":\"Missing key parameter\"}");
         return;
     };
     std.debug.print("IPC: method={s}, key={s}\n", .{ method, key });
@@ -3589,7 +3830,7 @@ fn nativeWebcontentCall(req: EasyApp.Request) anyerror!void {
                 const is_popup = std.mem.eql(u8, c.key_z, "view:extension-popup");
                 const handle = child_webview_create(c.app.main_window_hwnd, url_ptr, is_popup, c.key_z.ptr, c.disable_gpu);
                 if (handle == null) {
-                    c.req.reject("Failed to create child webview");
+                    c.req.reject("\"Failed to create child webview\"");
                     c.req.deinit(c.app.allocator);
                     // Remove the placeholder if creation failed
                     if (c.app.child_views.getEntry(c.key_z)) |entry| {
@@ -3743,11 +3984,17 @@ fn nativeWebcontentCall(req: EasyApp.Request) anyerror!void {
         req.resolveWith("{\"success\":false,\"message\":\"No active webview handle found\"}");
 
     } else if (std.mem.eql(u8, method, "execute-javascript")) {
-        const script = if (payload.get("code")) |c| c.string else return;
+        const script = if (payload.get("code")) |c| c.string else {
+            req.resolveWith("{\"success\":false,\"message\":\"Missing code parameter\"}");
+            return;
+        };
 
         if (app.child_views.getPtr(key)) |view_ptr| {
             if (view_ptr.cpp_handle) |h| {
-                const script_z = app.allocator.dupeZ(u8, script) catch return;
+                const script_z = app.allocator.dupeZ(u8, script) catch {
+                    req.resolveWith("{\"success\":false,\"message\":\"Out of memory\"}");
+                    return;
+                };
                 defer app.allocator.free(script_z);
 
                 const ScriptCtx = struct {
@@ -3765,7 +4012,10 @@ fn nativeWebcontentCall(req: EasyApp.Request) anyerror!void {
                             c.req.deinit(c.app.allocator);
                             c.app.allocator.destroy(c);
                         }
-                        const raw_result_json = std.mem.span(json_str);
+                        var raw_result_json = std.mem.span(json_str);
+                        if (raw_result_json.len == 0) {
+                            raw_result_json = "null";
+                        }
                         const res_json = std.fmt.allocPrint(c.app.allocator, "{{\"success\":{},\"result\":{s}}}", .{ success, raw_result_json }) catch return;
                         defer c.app.allocator.free(res_json);
                         const res_json_z = c.app.allocator.dupeZ(u8, res_json) catch return;
@@ -4266,7 +4516,16 @@ const INIT_SCRIPT =
     \\      try { _wcListener({ key, event, payload }); } catch(e) {}
     \\    }
     \\  };
-    \\  window.api.on = window.api.on || function(evt, cb) {};
+    \\  const _genericEventListeners = {};
+    \\  window.api.on = window.api.on || function(evt, cb) {
+    \\    if (!evt || typeof cb !== 'function') return;
+    \\    if (evt === 'update-status') {
+    \\      window.api.onUpdateStatus(function(s, p) { cb(p || { status: s }); });
+    \\      return;
+    \\    }
+    \\    if (!_genericEventListeners[evt]) _genericEventListeners[evt] = [];
+    \\    _genericEventListeners[evt].push(cb);
+    \\  };
     \\  window.api.logout = window.api.logout || async function() { window.location.href = '/pages/login/index.html'; };
     \\  window.api.savePersistedCredentials = window.api.savePersistedCredentials || async function(creds) {
     \\    try { localStorage.setItem('oneview_persisted_creds', JSON.stringify(creds)); return { success: true }; } catch(e) { return { success: false }; }
@@ -4453,8 +4712,58 @@ const INIT_SCRIPT =
     \\      return j.version || '1.0.0';
     \\    } catch(e) { return '1.0.0'; }
     \\  };
+    \\  const updateStatusListeners = [];
+    \\  window.api.onUpdateStatus = window.api.onUpdateStatus || function(cb) {
+    \\    updateStatusListeners.push(cb);
+    \\  };
+    \\  window.api.triggerUpdateStatus = function(data) {
+    \\    try {
+    \\      const payload = typeof data === 'string' ? JSON.parse(data) : data;
+    \\      updateStatusListeners.forEach(cb => {
+    \\        try { cb(payload.status, payload); } catch(e) {}
+    \\      });
+    \\    } catch(e) {}
+    \\  };
     \\  window.api.getCurrentUpdateStatus = window.api.getCurrentUpdateStatus || async function() {
-    \\    return { status: 'idle' };
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/app-update-status');
+    \\      const j = await r.json();
+    \\      return { state: { status: j.status, percent: j.percent, version: j.version, error: j.error, installerReady: j.installerReady, received: j.received, total: j.total } };
+    \\    } catch(e) { return { state: { status: 'idle' } }; }
+    \\  };
+    \\  window.api.downloadUpdate = window.api.downloadUpdate || async function() {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/download-app-update', { method: 'POST' });
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false, message: e.message }; }
+    \\  };
+    \\  window.api.installUpdate = window.api.installUpdate || async function() {
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/install-app-update', { method: 'POST' });
+    \\      return await r.json();
+    \\    } catch(e) { return { success: false, message: e.message }; }
+    \\  };
+    \\  const promptStateListeners = [];
+    \\  window.api.onUpdateInstallPromptState = window.api.onUpdateInstallPromptState || function(cb) {
+    \\    promptStateListeners.push(cb);
+    \\  };
+    \\  window.api.showUpdateInstallPrompt = window.api.showUpdateInstallPrompt || async function(payload) {
+    \\    promptStateListeners.forEach(cb => {
+    \\      try { cb({ open: true, version: payload?.version, mode: payload?.mode || 'update', title: payload?.title, message: payload?.message }); } catch(e) {}
+    \\    });
+    \\    return { success: true };
+    \\  };
+    \\  window.api.closeUpdateInstallPrompt = window.api.closeUpdateInstallPrompt || async function() {
+    \\    promptStateListeners.forEach(cb => {
+    \\      try { cb({ open: false }); } catch(e) {}
+    \\    });
+    \\    return { success: true };
+    \\  };
+    \\  window.api.submitUpdateInstallPrompt = window.api.submitUpdateInstallPrompt || async function(payload) {
+    \\    if (payload?.action === 'install') {
+    \\      return window.api.installUpdate();
+    \\    }
+    \\    return window.api.closeUpdateInstallPrompt();
     \\  };
     \\  window.api.getStartupDiagnostics = window.api.getStartupDiagnostics || async function() {
     \\    try {
@@ -5543,6 +5852,8 @@ fn onChildWebviewMessage(key_ptr: [*:0]const u8, message_ptr: [*:0]const u8) cal
 
                         var match_user: ?[]const u8 = null;
                         var match_pass: ?[]const u8 = null;
+                        defer if (match_user) |u| allocator.free(u);
+                        defer if (match_pass) |p| allocator.free(p);
                         var raw_content: ?[]u8 = null;
                         defer if (raw_content) |rc| allocator.free(rc);
 
@@ -5582,8 +5893,10 @@ fn onChildWebviewMessage(key_ptr: [*:0]const u8, message_ptr: [*:0]const u8) cal
                                                         }
 
                                                         if (is_match) {
-                                                            match_user = if (item.object.get("username")) |u| u.string else "";
-                                                            match_pass = if (item.object.get("password")) |pw| pw.string else "";
+                                                            const u_str = if (item.object.get("username")) |u| u.string else "";
+                                                            const p_str = if (item.object.get("password")) |pw| pw.string else "";
+                                                            match_user = allocator.dupe(u8, u_str) catch null;
+                                                            match_pass = allocator.dupe(u8, p_str) catch null;
                                                             break;
                                                         }
                                                     }
@@ -5596,20 +5909,30 @@ fn onChildWebviewMessage(key_ptr: [*:0]const u8, message_ptr: [*:0]const u8) cal
                         }
 
                         if (match_user != null and match_pass != null) {
+                            const esc_user = escapeJsonStr(allocator, match_user.?);
+                            defer if (esc_user.ptr != match_user.?.ptr) allocator.free(esc_user);
+                            const esc_pass = escapeJsonStr(allocator, match_pass.?);
+                            defer if (esc_pass.ptr != match_pass.?.ptr) allocator.free(esc_pass);
+
                             const res_js = std.fmt.allocPrint(allocator,
-                                "if (window.onAutofillReceived) window.onAutofillReceived('{s}', '{s}');",
-                                .{ match_user.?, match_pass.? }
+                                "if (window.onAutofillReceived) window.onAutofillReceived(\"{s}\", \"{s}\");",
+                                .{ esc_user, esc_pass }
                             ) catch return;
                             defer allocator.free(res_js);
                             const res_js_z = allocator.dupeZ(u8, res_js) catch return;
                             defer allocator.free(res_js_z);
                             
-                            const S = struct {
-                                fn cb(ctx: ?*anyopaque, success: bool, json_str: [*:0]const u8) callconv(.c) void {
-                                    _ = ctx; _ = success; _ = json_str;
+                            // Re-verify view and handle are still valid before executing script
+                            if (app.child_views.get(key)) |current_view| {
+                                if (current_view.cpp_handle == active_h) {
+                                    const S = struct {
+                                        fn cb(ctx: ?*anyopaque, success: bool, json_str: [*:0]const u8) callconv(.c) void {
+                                            _ = ctx; _ = success; _ = json_str;
+                                        }
+                                    };
+                                    child_webview_execute_script(active_h, res_js_z, S.cb, null);
                                 }
-                            };
-                            child_webview_execute_script(active_h, res_js_z, S.cb, null);
+                            }
                         }
                     }
                 }
@@ -6027,34 +6350,6 @@ pub fn main(init: std.process.Init) !void {
         }
         app.child_views.deinit();
         easy.deinit();
-
-        // Perform silent update hot-swap if scheduled
-        if (g_silent_update_ready) {
-            if (g_new_exe_path) |new_path| {
-                const exe_path = getOwnExePath(allocator) orelse "";
-                if (exe_path.len > 0) {
-                    const old_exe = std.fmt.allocPrint(allocator, "{s}.old", .{exe_path}) catch "";
-                    if (old_exe.len > 0) {
-                        const old_exe_z = allocator.dupeZ(u8, old_exe) catch null;
-                        const exe_path_z = allocator.dupeZ(u8, exe_path) catch null;
-                        const new_path_z = allocator.dupeZ(u8, new_path) catch null;
-                        if (old_exe_z != null and exe_path_z != null and new_path_z != null) {
-                            const k32 = struct {
-                                extern "kernel32" fn MoveFileExA(lpExistingFileName: [*:0]const u8, lpNewFileName: [*:0]const u8, dwFlags: u32) callconv(.winapi) u32;
-                            };
-                            _ = k32.MoveFileExA(exe_path_z.?, old_exe_z.?, 1);
-                            _ = k32.MoveFileExA(new_path_z.?, exe_path_z.?, 1);
-                        }
-                        if (old_exe_z) |o| allocator.free(o);
-                        if (exe_path_z) |e| allocator.free(e);
-                        if (new_path_z) |n| allocator.free(n);
-                        allocator.free(old_exe);
-                    }
-                    allocator.free(exe_path);
-                }
-                allocator.free(new_path);
-            }
-        }
     }
 
     if (is_detached) {
@@ -6296,6 +6591,18 @@ extern "kernel32" fn LocalFree(hMem: ?*anyopaque) callconv(.winapi) ?*anyopaque;
 
 var g_silent_update_ready = false;
 var g_new_exe_path: ?[]const u8 = null;
+
+// GitHub auto-update tracking
+var g_update_status: []const u8 = "idle";
+var g_update_available: bool = false;
+var g_update_version: ?[]const u8 = null;
+var g_update_download_url: ?[]const u8 = null;
+var g_update_installer_path: ?[]const u8 = null;
+var g_update_percent: f64 = 0.0;
+var g_update_received: u32 = 0;
+var g_update_total: u32 = 0;
+var g_update_error: ?[]const u8 = null;
+var g_update_downloading: bool = false;
 
 var g_original_wndproc: ?*anyopaque = null;
 var g_theme_msg: u32 = 0; // Registered cross-process theme broadcast message
@@ -7023,98 +7330,275 @@ fn loginAndInjectCookies(app: *App) void {
 
 }
 
-fn checkAndPerformUpdate(app: *App) void {
-    const allocator = app.allocator;
-    const policy_raw = httpGetWinINet(allocator, "https://raw.githubusercontent.com/dikshantgoel-WPP/automation-store/refs/heads/main/update.json") orelse return;
-    defer allocator.free(policy_raw);
-
-    var parsed = std.json.parseFromSlice(std.json.Value, allocator, policy_raw, .{}) catch return;
-    defer parsed.deinit();
-
-    const obj = parsed.value.object;
-    const version = if (obj.get("version")) |v| v.string else return;
-    const forceUpdate = if (obj.get("forceUpdate")) |f| f.bool else false;
-    const download_url = if (obj.get("url")) |u| u.string else return;
-
-    if (std.mem.eql(u8, version, "1.2.7")) {
-        return;
-    }
-
-    if (forceUpdate) {
-        if (app.main_webview) |main_wv| {
-            main_wv.eval("alert('A critical update is being installed. The application will restart.');") catch {};
+fn fetchGitHubLatestRelease(allocator: std.mem.Allocator) ?[]const u8 {
+    // 1. Try releases/latest
+    const latest_url = "https://api.github.com/repos/sumanbiswas123/oneview-zig/releases/latest";
+    if (httpGetWinINet(allocator, latest_url)) |raw| {
+        if (std.mem.indexOf(u8, raw, "\"tag_name\"") != null) {
+            return raw;
         }
-        performHotSwap(allocator, download_url);
-    } else {
-        performSilentUpdate(allocator, download_url);
+        allocator.free(raw);
     }
+    // 2. Try releases list
+    const list_url = "https://api.github.com/repos/sumanbiswas123/oneview-zig/releases";
+    if (httpGetWinINet(allocator, list_url)) |raw| {
+        if (std.mem.indexOf(u8, raw, "\"tag_name\"") != null) {
+            return raw;
+        }
+        allocator.free(raw);
+    }
+    // 3. Fallback to repository update.json if available
+    const fallback_url = "https://raw.githubusercontent.com/sumanbiswas123/oneview-zig/main/update.json";
+    if (httpGetWinINet(allocator, fallback_url)) |raw| {
+        return raw;
+    }
+    return null;
 }
 
-fn performHotSwap(allocator: std.mem.Allocator, download_url: []const u8) void {
-    const exe_path = getOwnExePath(allocator) orelse return;
-    defer allocator.free(exe_path);
-    const old_exe = std.fmt.allocPrint(allocator, "{s}.old", .{exe_path}) catch return;
-    defer allocator.free(old_exe);
-
-    const appdata = getEnvVar(allocator, "APPDATA");
-    defer if (appdata.len > 0) allocator.free(appdata);
-    const temp_exe = std.fmt.allocPrint(allocator, "{s}\\OneView Dev\\oneview_new.exe", .{appdata}) catch return;
-    defer allocator.free(temp_exe);
-
-    const temp_exe_z = allocator.dupeZ(u8, temp_exe) catch return;
-    defer allocator.free(temp_exe_z);
-
-    const download_url_z = allocator.dupeZ(u8, download_url) catch return;
-    defer allocator.free(download_url_z);
-
-    if (native_download_file(download_url_z, temp_exe_z) != 0) {
-        return;
-    }
-
-    const old_exe_z = allocator.dupeZ(u8, old_exe) catch return;
-    defer allocator.free(old_exe_z);
-    const exe_path_z = allocator.dupeZ(u8, exe_path) catch return;
-    defer allocator.free(exe_path_z);
-
-    const kernel32 = struct {
-        extern "kernel32" fn MoveFileExA(lpExistingFileName: [*:0]const u8, lpNewFileName: [*:0]const u8, dwFlags: u32) callconv(.winapi) u32;
-    };
-    _ = kernel32.MoveFileExA(exe_path_z, old_exe_z, 1);
-    _ = kernel32.MoveFileExA(temp_exe_z, exe_path_z, 1);
-
-    var si = STARTUPINFOA{};
-    var pi = PROCESS_INFORMATION{};
-    if (CreateProcessA(null, exe_path_z.ptr, null, null, 0, 0, null, null, &si, &pi) != 0) {
-        _ = CloseHandle(pi.hProcess);
-        _ = CloseHandle(pi.hThread);
-        std.process.exit(0);
-    }
+fn triggerWebviewUpdateStatus(app: ?*App, status: []const u8, percent: f64, version: ?[]const u8) void {
+    const a = app orelse g_app_ptr orelse return;
+    const wv = a.main_webview orelse return;
+    const v_str = version orelse "";
+    var buf: [512]u8 = undefined;
+    const js = std.fmt.bufPrint(&buf,
+        "if (window.api && typeof window.api.triggerUpdateStatus === 'function') {{ window.api.triggerUpdateStatus({{ status: \"{s}\", percent: {d:.1}, version: \"{s}\" }}); }}",
+        .{ status, percent, v_str }
+    ) catch return;
+    const js_z = a.allocator.dupeZ(u8, js) catch return;
+    defer a.allocator.free(js_z);
+    wv.eval(js_z) catch {};
 }
 
-fn performSilentUpdate(allocator: std.mem.Allocator, download_url: []const u8) void {
-    const thread = std.Thread.spawn(.{}, struct {
-        fn run(alloc: std.mem.Allocator, url: []const u8) void {
-            const exe_path = getOwnExePath(alloc) orelse return;
-            defer alloc.free(exe_path);
-            const appdata = getEnvVar(alloc, "APPDATA");
-            defer if (appdata.len > 0) alloc.free(appdata);
-            const temp_exe = std.fmt.allocPrint(alloc, "{s}\\OneView Dev\\oneview_new.exe", .{appdata}) catch return;
-            const temp_exe_z = alloc.dupeZ(u8, temp_exe) catch return;
-            defer alloc.free(temp_exe_z);
-            const url_z = alloc.dupeZ(u8, url) catch return;
-            defer alloc.free(url_z);
+fn startAppUpdateDownload(allocator: std.mem.Allocator, download_url: []const u8, version: []const u8, expected_size: u32) void {
+    if (g_update_downloading) return;
 
-            if (native_download_file(url_z, temp_exe_z) == 0) {
-                g_silent_update_ready = true;
-                g_new_exe_path = temp_exe;
-            } else {
-                alloc.free(temp_exe);
+    const localappdata = getEnvVar(allocator, "LOCALAPPDATA");
+    defer if (localappdata.len > 0) allocator.free(localappdata);
+    const base_dir = if (localappdata.len > 0) localappdata else "C:\\ProgramData";
+
+    const update_dir = std.fs.path.join(allocator, &.{ base_dir, "OneView", "updates" }) catch return;
+    defer allocator.free(update_dir);
+
+    const installer_path = std.fmt.allocPrint(allocator, "{s}\\OneViewSetup-v{s}.exe", .{ update_dir, version }) catch return;
+
+    // Check if the EXACT matching version installer is already downloaded on disk (> 1MB)
+    var file_on_disk = false;
+    if (allocator.dupeZ(u8, installer_path)) |installer_path_z| {
+        defer allocator.free(installer_path_z);
+        if (fopen(installer_path_z, "rb")) |fh| {
+            _ = fseek(fh, 0, 2);
+            const file_size: usize = @intCast(ftell(fh));
+            _ = fclose(fh);
+            if (file_size > 1000000 and (expected_size == 0 or file_size >= expected_size - 100000)) {
+                file_on_disk = true;
+                g_update_received = @intCast(file_size);
+                g_update_total = if (expected_size > 0) expected_size else @intCast(file_size);
             }
         }
-    }.run, .{ allocator, download_url }) catch {
+    } else |_| {}
+
+    if (file_on_disk) {
+        g_update_status = "downloaded";
+        g_update_percent = 100.0;
+        g_update_installer_path = installer_path;
+        g_silent_update_ready = true;
+        g_new_exe_path = installer_path;
+        g_update_error = null;
+        triggerWebviewUpdateStatus(null, "downloaded", 100.0, version);
+        return;
+    }
+
+    // Clean reset state if not on disk
+    g_update_installer_path = null;
+    g_silent_update_ready = false;
+    g_new_exe_path = null;
+    g_update_error = null;
+    g_update_received = 0;
+    g_update_total = expected_size;
+    g_update_downloading = true;
+    g_update_status = "progress";
+    g_update_percent = 0.0;
+    triggerWebviewUpdateStatus(null, "progress", 0.0, version);
+
+    const thread = std.Thread.spawn(.{}, struct {
+        fn run(alloc: std.mem.Allocator, url: []const u8, ver: []const u8, size: u32, path: []const u8) void {
+            defer {
+                g_update_downloading = false;
+            }
+            const installer_path_z = alloc.dupeZ(u8, path) catch {
+                g_update_status = "error";
+                g_update_error = "Download failed";
+                triggerWebviewUpdateStatus(null, "error", 0.0, ver);
+                alloc.free(path);
+                return;
+            };
+            defer alloc.free(installer_path_z);
+            const url_z = alloc.dupeZ(u8, url) catch {
+                g_update_status = "error";
+                g_update_error = "Download failed";
+                triggerWebviewUpdateStatus(null, "error", 0.0, ver);
+                alloc.free(path);
+                return;
+            };
+            defer alloc.free(url_z);
+
+            // Spawn progress monitor thread (50ms interval for microsecond responsiveness)
+            const mon_thread = std.Thread.spawn(.{}, struct {
+                fn runMon(v: []const u8) void {
+                    while (g_update_downloading) {
+                        Sleep(50);
+                        if (!g_update_downloading) break;
+                        var prog: f64 = 0.0;
+                        var rec: u32 = 0;
+                        var tot: u32 = 0;
+                        var tp: [260]u8 = undefined;
+                        get_native_download_progress(&prog, &rec, &tot, &tp, 260);
+                        g_update_received = rec;
+                        g_update_total = tot;
+                        g_update_percent = prog;
+                        triggerWebviewUpdateStatus(null, "progress", prog, v);
+                    }
+                }
+            }.runMon, .{ver}) catch null;
+            if (mon_thread) |mt| mt.detach();
+
+            const rc = native_download_file(url_z, installer_path_z, size);
+            var download_ok = false;
+            if (rc == 0) {
+                if (fopen(installer_path_z, "rb")) |fh| {
+                    _ = fseek(fh, 0, 2);
+                    const file_sz: usize = @intCast(ftell(fh));
+                    _ = fclose(fh);
+                    if (file_sz > 1000000) {
+                        download_ok = true;
+                        g_update_received = @intCast(file_sz);
+                        if (g_update_total == 0) g_update_total = @intCast(file_sz);
+                    }
+                }
+            }
+
+            if (download_ok) {
+                g_update_status = "downloaded";
+                g_update_percent = 100.0;
+                g_update_installer_path = path;
+                g_silent_update_ready = true;
+                g_new_exe_path = path;
+                g_update_error = null;
+                triggerWebviewUpdateStatus(null, "downloaded", 100.0, ver);
+            } else {
+                g_update_status = "error";
+                g_update_error = "Download failed";
+                g_silent_update_ready = false;
+                g_update_installer_path = null;
+                g_new_exe_path = null;
+                triggerWebviewUpdateStatus(null, "error", 0.0, ver);
+                alloc.free(path);
+            }
+        }
+    }.run, .{ allocator, download_url, version, expected_size, installer_path }) catch {
+        g_update_downloading = false;
+        g_update_status = "error";
+        g_update_error = "Failed to spawn update thread";
+        triggerWebviewUpdateStatus(null, "error", 0.0, version);
+        allocator.free(installer_path);
         return;
     };
     thread.detach();
+}
+
+fn executeUpdateInstaller(allocator: std.mem.Allocator, installer_path: []const u8) bool {
+    const path_z = allocator.dupeZ(u8, installer_path) catch return false;
+    defer allocator.free(path_z);
+
+    const shell32 = struct {
+        extern "shell32" fn ShellExecuteA(
+            hwnd: ?*anyopaque,
+            lpOperation: ?[*:0]const u8,
+            lpFile: [*:0]const u8,
+            lpParameters: ?[*:0]const u8,
+            lpDirectory: ?[*:0]const u8,
+            nShowCmd: c_int
+        ) callconv(.winapi) ?*anyopaque;
+    };
+    const res = shell32.ShellExecuteA(null, "open", path_z.ptr, "/SILENT /FORCECLOSEAPPLICATIONS", null, 1);
+    const code: usize = @intFromPtr(res);
+    if (code > 32) {
+        // Successfully launched installer; terminate current instance
+        std.process.exit(0);
+    }
+    return false;
+}
+
+fn checkAndPerformUpdate(app: *App) void {
+    const allocator = app.allocator;
+    const release_raw = fetchGitHubLatestRelease(allocator) orelse return;
+    defer allocator.free(release_raw);
+
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, release_raw, .{}) catch return;
+    defer parsed.deinit();
+
+    var release_obj: ?std.json.ObjectMap = null;
+    if (parsed.value == .object) {
+        release_obj = parsed.value.object;
+    } else if (parsed.value == .array and parsed.value.array.items.len > 0) {
+        if (parsed.value.array.items[0] == .object) {
+            release_obj = parsed.value.array.items[0].object;
+        }
+    }
+    const obj = release_obj orelse return;
+
+    var remote_ver: []const u8 = "";
+    if (obj.get("tag_name")) |t| {
+        remote_ver = t.string;
+    } else if (obj.get("version")) |v| {
+        remote_ver = v.string;
+    }
+    if (std.mem.startsWith(u8, remote_ver, "v") or std.mem.startsWith(u8, remote_ver, "V")) {
+        remote_ver = remote_ver[1..];
+    }
+    if (remote_ver.len == 0 or !isVersionGreater(remote_ver, APP_VERSION)) {
+        g_update_status = "not-available";
+        return;
+    }
+
+    var download_url: ?[]const u8 = null;
+    var download_size: u32 = 0;
+    if (obj.get("assets")) |assets_val| {
+        if (assets_val == .array) {
+            for (assets_val.array.items) |asset_item| {
+                if (asset_item == .object) {
+                    const name = if (asset_item.object.get("name")) |n| n.string else "";
+                    if (std.mem.endsWith(u8, name, ".exe")) {
+                        if (asset_item.object.get("browser_download_url")) |burl| {
+                            download_url = burl.string;
+                            if (asset_item.object.get("size")) |sval| {
+                                if (sval == .integer) {
+                                    download_size = @intCast(sval.integer);
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (download_url == null) {
+        if (obj.get("url")) |u| {
+            download_url = u.string;
+        }
+    }
+
+    if (download_url) |url| {
+        g_update_available = true;
+        g_update_version = allocator.dupe(u8, remote_ver) catch remote_ver;
+        g_update_download_url = allocator.dupe(u8, url) catch url;
+        g_update_status = "available";
+        triggerWebviewUpdateStatus(app, "available", 0.0, remote_ver);
+
+        // Download in background
+        startAppUpdateDownload(allocator, url, remote_ver, download_size);
+    }
 }
 
 
@@ -7125,7 +7609,7 @@ fn sendTelemetry(allocator: std.mem.Allocator) void {
     var body_map = std.json.ObjectMap.empty;
     defer body_map.deinit(allocator);
     body_map.put(allocator, "username", std.json.Value{ .string = username }) catch return;
-    body_map.put(allocator, "version", std.json.Value{ .string = "1.2.7" }) catch return;
+    body_map.put(allocator, "version", std.json.Value{ .string = APP_VERSION }) catch return;
     const body_str = std.json.Stringify.valueAlloc(allocator, std.json.Value{ .object = body_map }, .{}) catch return;
     defer allocator.free(body_str);
 

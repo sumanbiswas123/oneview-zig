@@ -23,7 +23,7 @@ export function createViewSettingsManager({
     const section = String(value || "")
       .trim()
       .toLowerCase();
-    return ["downloads", "history", "extensions", "passwords"].includes(section)
+    return ["downloads", "history", "extensions", "passwords", "about"].includes(section)
       ? section
       : "extensions";
   }
@@ -34,6 +34,7 @@ export function createViewSettingsManager({
     if (normalized === "history") return "History";
     if (normalized === "passwords") return "Passwords";
     if (normalized === "extensions") return "Extensions";
+    if (normalized === "about") return "About & Updates";
     return "Extensions";
   }
 
@@ -514,6 +515,15 @@ export function createViewSettingsManager({
           renderNativeSettingsPage(tab);
         });
       }
+    } else if (section === "about") {
+      if (!state._aboutInfoLoaded) {
+        state._aboutInfoLoaded = true;
+        ensureNativeSettingsGeneralInfo().then(() => {
+          renderNativeSettingsPage(tab);
+        });
+      }
+      sectionBody = renderNativeSettingsAboutSection();
+      sectionDescription = `OneView v${state.nativeSettingsGeneralInfo?.version || "1.3.7"} • Check for updates and system configuration.`;
     } else {
       state._credentialsLoaded = false;
     }
@@ -529,7 +539,7 @@ export function createViewSettingsManager({
               </div>
             </div>
             <div class="native-settings-chips" role="tablist" aria-label="Settings sections">
-              ${["extensions", "history", "downloads", "passwords"]
+              ${["extensions", "history", "downloads", "passwords", "about"]
                 .map(
                   (item) => {
                     const shortcut = getSettingsShortcut(item);
@@ -555,6 +565,44 @@ export function createViewSettingsManager({
           </div>
         </section>
       </div>
+    `;
+  }
+
+  function renderNativeSettingsAboutSection() {
+    const version = state.nativeSettingsGeneralInfo?.version || "1.3.7";
+    const defaultStatus = state.nativeSettingsGeneralInfo?.defaultOpenStatus || "Configured";
+
+    return `
+      <section class="native-settings-section">
+        <div class="native-settings-section-head">
+          <h3>OneView App & Updates</h3>
+          <p>Application version, update status, and system configurations</p>
+        </div>
+        <div class="native-settings-list">
+          <article class="native-settings-row">
+            <div class="native-settings-row-main">
+              <div>
+                <div class="native-settings-row-title">Version</div>
+                <div class="native-settings-row-note">v${escapeHtml(version)}</div>
+              </div>
+              <div class="native-settings-inline-actions">
+                <button class="native-settings-action" type="button" data-native-settings-action="check-updates">Check for updates</button>
+              </div>
+            </div>
+          </article>
+          <article class="native-settings-row">
+            <div class="native-settings-row-main">
+              <div>
+                <div class="native-settings-row-title">Default Browser</div>
+                <div class="native-settings-row-note">${escapeHtml(defaultStatus)}</div>
+              </div>
+              <div class="native-settings-inline-actions">
+                <button class="native-settings-action" type="button" data-native-settings-action="open-default-apps">Open Default Apps Settings</button>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
     `;
   }
 
@@ -683,8 +731,25 @@ export function createViewSettingsManager({
         const action = String(settingsAction.dataset.nativeSettingsAction || "").trim();
         try {
           if (action === "check-updates" && window.api?.checkForUpdates) {
-            await window.api.checkForUpdates();
-            showToast("Update check started.", "success");
+            if (typeof window.triggerManualSystemUpdateCheck === "function") {
+              await window.triggerManualSystemUpdateCheck();
+            } else {
+              showToast("Checking for OneView updates...", "info", 3000);
+              try {
+                const res = await window.api.checkForUpdates();
+                if (res && res.updateAvailable) {
+                  showToast(
+                    `Update v${res.latestVersion || res.version || ""} is available!`,
+                    "info",
+                    5000,
+                  );
+                } else {
+                  showToast("OneView is already up to date.", "success", 4000);
+                }
+              } catch (e) {
+                showToast(e?.message || "Could not check for updates.", "error", 4000);
+              }
+            }
           } else if (
             action === "open-default-apps" &&
             window.api?.openDefaultAppSettings

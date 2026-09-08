@@ -5,17 +5,17 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>OneView</title>
-    <script type="module" crossorigin src="../../assets/dashboard-DIZ1JHaj.js"></script>
+    <script type="module" crossorigin src="../../assets/dashboard-Sw-YVAMz.js"></script>
     <link rel="modulepreload" crossorigin href="../../assets/modulepreload-polyfill-B5Qt9EMX.js">
     <link rel="modulepreload" crossorigin href="../../assets/titlebar-B3221Od_.js">
     <link rel="modulepreload" crossorigin href="../../assets/notifications-CBkElf_0.js">
-    <link rel="modulepreload" crossorigin href="../../assets/app-env-DxClrP2r.js">
-    <link rel="modulepreload" crossorigin href="../../assets/app-runtime-DxUgWNtJ.js">
-    <link rel="modulepreload" crossorigin href="../../assets/utils-Lv9QOe7S.js">
-    <link rel="modulepreload" crossorigin href="../../assets/app-update-notifications-X4C5sJyc.js">
-    <link rel="modulepreload" crossorigin href="../../assets/external-exe-DRsy67iY.js">
+    <link rel="modulepreload" crossorigin href="../../assets/app-env-Cwx6WtbG.js">
+    <link rel="modulepreload" crossorigin href="../../assets/app-runtime-CI2L9vDX.js">
+    <link rel="modulepreload" crossorigin href="../../assets/api-query-CnFqXUJs.js">
+    <link rel="modulepreload" crossorigin href="../../assets/utils-BZXZwSp-.js">
+    <link rel="modulepreload" crossorigin href="../../assets/app-update-notifications-DxIbSuXu.js">
     <link rel="stylesheet" crossorigin href="../../assets/titlebar-CkXOaYVX.css">
-    <link rel="stylesheet" crossorigin href="../../assets/dashboard-BHb5LL0k.css">
+    <link rel="stylesheet" crossorigin href="../../assets/dashboard-DHqCVo2w.css">
   </head>
   <!-- Module scripts -->
   <body>
@@ -240,28 +240,25 @@
             title="Update Available - Click to Restart"
             style="margin-right: 12px; color: var(--accent-success); display: none"
           >
-            <span class="update-icon-shell" aria-hidden="true">
+            <span id="update-icon-shell" class="update-icon-shell" aria-hidden="true">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
-                width="22"
-                height="22"
+                width="20"
+                height="20"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
                 stroke-width="2"
                 stroke-linecap="round"
                 stroke-linejoin="round"
-                class="feather feather-download-cloud"
+                class="update-action-icon"
               >
-                <polyline points="8 17 12 21 16 17"></polyline>
-                <line x1="12" y1="12" x2="12" y2="21"></line>
-                <path
-                  d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"
-                ></path>
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
               </svg>
             </span>
             <span id="update-btn-label" class="update-btn-label hidden"></span>
-            <span class="update-badge">!</span>
           </button>
 
           <!-- Notification Bell -->

@@ -31,9 +31,14 @@ pub fn build(b: *std.Build) void {
     exe.root_module.linkSystemLibrary("ole32", .{});
     exe.root_module.linkSystemLibrary("oleaut32", .{});
     exe.root_module.linkSystemLibrary("user32", .{});
+    exe.root_module.linkSystemLibrary("shell32", .{});
+    exe.root_module.linkSystemLibrary("shlwapi", .{});
+    exe.root_module.linkSystemLibrary("urlmon", .{});
+    exe.root_module.linkSystemLibrary("wininet", .{});
 
     exe.root_module.addWin32ResourceFile(.{ .file = b.path("src/resources.rc") });
     b.installArtifact(exe);
+    b.installFile("WebView2Loader.dll", "bin/WebView2Loader.dll");
 
 
 

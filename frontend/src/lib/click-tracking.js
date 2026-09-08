@@ -4,6 +4,7 @@ import {
   isAppProtocolUrl,
 } from "./app-env.js";
 import { STORAGE_KEYS } from "./app-runtime.js";
+import { queryDataApi } from "./api-query.js";
 
 const APP_CLICK_TRACKING_STORAGE_KEY = STORAGE_KEYS.clickTracking;
 const TRACKING_ENDPOINT_STORAGE_KEY = STORAGE_KEYS.clickTrackingEndpoint;
@@ -11,7 +12,6 @@ console.log(TRACKING_ENDPOINT_STORAGE_KEY,"TRACKING_ENDPOINT_STORAGE_KEY")
 const USER_ROLE_STORAGE_KEY = STORAGE_KEYS.userRole;
 const DEFAULT_TRACKING_ENDPOINT =
   `${APP_SERVICE_BASE_URL}/api/send-ticket-data`;
-const RESOURCE_LOOKUP_ENDPOINT = `${RESOURCE_SERVICE_BASE_URL}/api/resources`;
 
 let trackingQueue = Promise.resolve();
 let roleLookupInFlight = null;
@@ -146,20 +146,18 @@ async function resolveTrackedUserRole(empId) {
     return roleLookupInFlight;
   }
 
-  roleLookupInFlight = fetch(
-    `${RESOURCE_LOOKUP_ENDPOINT}/${encodeURIComponent(resourceLookupId)}`,
-    {
-      method: "GET",
-      signal: AbortSignal.timeout(5000),
-    },
-  )
-    .then(async (response) => {
-      if (!response.ok) {
-        throw new Error(`Role lookup failed with status ${response.status}`);
-      }
-      return response.json();
+  const isNumericId = /^\d+$/.test(resourceLookupId);
+  const filter = isNumericId
+    ? { emp_id: resourceLookupId }
+    : resourceLookupId.includes("@")
+      ? { resource_email_id: resourceLookupId }
+      : { resource_name: resourceLookupId };
+
+  roleLookupInFlight = queryDataApi("resources", filter, { timeoutMs: 5000 })
+    .then(({ data }) => {
+      const resource = data[0] || {};
+      return persistUserRole(extractRoleFromResource(resource), empId);
     })
-    .then((data) => persistUserRole(extractRoleFromResource(data), empId))
     .catch((error) => {
       console.warn("Could not resolve user role for click tracking:", error);
       return "";
