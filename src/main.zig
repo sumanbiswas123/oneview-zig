@@ -6446,6 +6446,9 @@ pub fn main(init: std.process.Init) !void {
     }
 
     if (!is_detached) {
+        // Clean up previously installed update installers
+        cleanUpdateDirectory(allocator, null);
+
         // Trigger credentials loading and auto-update (Background threads to prevent startup block)
         const login_thread = std.Thread.spawn(.{}, loginAndInjectCookies, .{&app}) catch null;
         if (login_thread) |t| t.detach();
@@ -7369,8 +7372,85 @@ fn triggerWebviewUpdateStatus(app: ?*App, status: []const u8, percent: f64, vers
     wv.eval(js_z) catch {};
 }
 
+fn cleanUpdateDirectory(allocator: std.mem.Allocator, keep_version: ?[]const u8) void {
+    const localappdata = getEnvVar(allocator, "LOCALAPPDATA");
+    defer if (localappdata.len > 0) allocator.free(localappdata);
+    const base_dir = if (localappdata.len > 0) localappdata else "C:\\ProgramData";
+
+    const update_dir = std.fs.path.join(allocator, &.{ base_dir, "OneView", "updates" }) catch return;
+    defer allocator.free(update_dir);
+
+    const search_pattern = std.fmt.allocPrint(allocator, "{s}\\*.exe", .{update_dir}) catch return;
+    defer allocator.free(search_pattern);
+    const search_pattern_z = allocator.dupeZ(u8, search_pattern) catch return;
+    defer allocator.free(search_pattern_z);
+
+    const WIN32_FIND_DATAA = extern struct {
+        dwFileAttributes: u32,
+        ftCreationTime: extern struct { dwLowDateTime: u32, dwHighDateTime: u32 },
+        ftLastAccessTime: extern struct { dwLowDateTime: u32, dwHighDateTime: u32 },
+        ftLastWriteTime: extern struct { dwLowDateTime: u32, dwHighDateTime: u32 },
+        nFileSizeHigh: u32,
+        nFileSizeLow: u32,
+        dwReserved0: u32,
+        dwReserved1: u32,
+        cFileName: [260]u8,
+        cAlternateFileName: [14]u8,
+    };
+
+    const kernel32_f = struct {
+        extern "kernel32" fn FindFirstFileA(lpFileName: [*:0]const u8, lpFindFileData: *WIN32_FIND_DATAA) callconv(.winapi) ?*anyopaque;
+        extern "kernel32" fn FindNextFileA(hFindFile: ?*anyopaque, lpFindFileData: *WIN32_FIND_DATAA) callconv(.winapi) i32;
+        extern "kernel32" fn FindClose(hFindFile: ?*anyopaque) callconv(.winapi) i32;
+        extern "kernel32" fn DeleteFileA(lpFileName: [*:0]const u8) callconv(.winapi) i32;
+    };
+
+    const INVALID_HANDLE_VALUE: ?*anyopaque = @ptrFromInt(@as(usize, ~@as(usize, 0)));
+
+    var find_data: WIN32_FIND_DATAA = undefined;
+    const hFind = kernel32_f.FindFirstFileA(search_pattern_z, &find_data);
+    if (hFind == null or hFind == INVALID_HANDLE_VALUE) return;
+    defer _ = kernel32_f.FindClose(hFind);
+
+    while (true) {
+        const file_name = std.mem.sliceTo(&find_data.cFileName, 0);
+        if (std.mem.startsWith(u8, file_name, "OneViewSetup-v") and std.mem.endsWith(u8, file_name, ".exe")) {
+            var should_delete = false;
+            if (keep_version) |kv| {
+                const expected_name = std.fmt.allocPrint(allocator, "OneViewSetup-v{s}.exe", .{kv}) catch "";
+                defer if (expected_name.len > 0) allocator.free(expected_name);
+                if (expected_name.len > 0 and !std.mem.eql(u8, file_name, expected_name)) {
+                    should_delete = true;
+                }
+            } else {
+                const v_part = file_name["OneViewSetup-v".len .. file_name.len - ".exe".len];
+                if (!isVersionGreater(v_part, APP_VERSION)) {
+                    should_delete = true;
+                }
+            }
+
+            if (should_delete) {
+                const full_file_path = std.fmt.allocPrint(allocator, "{s}\\{s}", .{ update_dir, file_name }) catch null;
+                if (full_file_path) |ffp| {
+                    defer allocator.free(ffp);
+                    const ffp_z = allocator.dupeZ(u8, ffp) catch null;
+                    if (ffp_z) |ffpz| {
+                        defer allocator.free(ffpz);
+                        _ = kernel32_f.DeleteFileA(ffpz);
+                    }
+                }
+            }
+        }
+
+        if (kernel32_f.FindNextFileA(hFind, &find_data) == 0) break;
+    }
+}
+
 fn startAppUpdateDownload(allocator: std.mem.Allocator, download_url: []const u8, version: []const u8, expected_size: u32) void {
     if (g_update_downloading) return;
+
+    // Clean up any older/previous version installers on disk first
+    cleanUpdateDirectory(allocator, version);
 
     const localappdata = getEnvVar(allocator, "LOCALAPPDATA");
     defer if (localappdata.len > 0) allocator.free(localappdata);

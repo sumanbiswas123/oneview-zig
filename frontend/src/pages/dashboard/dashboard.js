@@ -175,15 +175,22 @@ async function ensureDashboardSystemUpdateCheck() {
     if (res && typeof res === "object") {
       if (res.updateAvailable) {
         const updateStatus = String(res.status || "available").trim();
+        const isReady = updateStatus === "downloaded" || res.installerReady === true;
         applyDashboardUpdateStatus(
           {
-            status: updateStatus,
-            version: res.latestVersion,
+            status: isReady ? "downloaded" : "progress",
+            version: res.latestVersion || res.version,
             downloadUrl: res.downloadUrl,
-            percent: updateStatus === "downloaded" ? 100 : 0,
+            percent: isReady ? 100 : (typeof res.percent === "number" ? res.percent : 0),
+            installerReady: isReady,
+            received: res.received,
+            total: res.total,
           },
           { announce: true },
         );
+        if (!isReady) {
+          startActiveUpdatePoller();
+        }
       } else {
         applyDashboardUpdateStatus(
           { status: "not-available", version: res.currentVersion },
@@ -763,32 +770,10 @@ async function triggerManualSystemUpdateCheck() {
   // 1. Immediately show checking status with spinner in topbar button
   applyDashboardUpdateStatus({ status: "checking" }, { announce: false });
 
-  let priorDownloadedVersion = "";
-  try {
-    const response = await window.api?.getCurrentUpdateStatus?.();
-    const currentStatus = String(response?.state?.status || "").trim();
-    const currentVersion = String(response?.state?.version || "").trim();
-    if (response?.state?.installerReady === true && currentStatus === "downloaded") {
-      priorDownloadedVersion = currentVersion;
-      applyDashboardUpdateStatus(
-        { ...response.state, status: "downloaded", installerReady: true },
-        { announce: true }
-      );
-      showToast(
-        currentVersion
-          ? `Update v${currentVersion} is already downloaded and ready to install.`
-          : "An update is already downloaded and ready to install.",
-        "success",
-        5000
-      );
-      return;
-    }
-  } catch (_error) {}
-
   pendingManualUpdateCheckFeedback = true;
   manualUpdateCheckContext = {
     pending: true,
-    priorDownloadedVersion,
+    priorDownloadedVersion: "",
   };
   showToast("Checking for OneView updates...", "info", 3000);
   startActiveUpdatePoller();
