@@ -178,6 +178,7 @@ async function initDetachedShell() {
 
   const attachBtn = document.getElementById("attachMainBtn");
   attachBtn?.addEventListener("click", async () => {
+    fetch('http://127.0.0.1:9731/api/debug-log?msg=' + encodeURIComponent('[Detached-Shell] Attach button clicked, window.api.attachDetachedViewWindow=' + typeof window.api?.attachDetachedViewWindow)).catch(() => {});
     if (!window.api?.attachDetachedViewWindow) return;
     const tabsList = document.getElementById("tabsList");
     const activeTab = tabsList?.querySelector(".tab.active .tab-title");
@@ -190,17 +191,24 @@ async function initDetachedShell() {
         ? activeWebview.getURL()
         : initialUrl;
     const nextTitle = String(activeTab?.textContent || initialTitle || "Attached Tab");
-    await window.api.attachDetachedViewWindow({
+    fetch('http://127.0.0.1:9731/api/debug-log?msg=' + encodeURIComponent('[Detached-Shell] Calling attachDetachedViewWindow url=' + currentUrl + ', title=' + nextTitle)).catch(() => {});
+    const resp = await window.api.attachDetachedViewWindow({
       url: currentUrl,
       title: nextTitle,
       partition: initialPartition,
     });
+    fetch('http://127.0.0.1:9731/api/debug-log?msg=' + encodeURIComponent('[Detached-Shell] attachDetachedViewWindow response=' + JSON.stringify(resp))).catch(() => {});
 
     const allTabs = Array.from(tabsList?.querySelectorAll(".tab") || []);
     if (allTabs.length > 1) {
-      const closeBtn = activeTabEl?.querySelector(".close-tab-btn");
-      if (closeBtn) {
-        closeBtn.click();
+      const activeTabId = activeTabEl?.getAttribute("data-tab-id");
+      if (typeof window.closeTab === "function" && activeTabId) {
+        window.closeTab(activeTabId);
+      } else {
+        const closeBtn = activeTabEl?.querySelector(".close-tab-btn");
+        if (closeBtn) {
+          closeBtn.click();
+        }
       }
     } else {
       window.api?.close?.();

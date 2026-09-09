@@ -2181,8 +2181,14 @@ async function openUrlFromDashboard(
   forceNewTab = false,
   options = {},
 ) {
-  const targetUrl = String(url || "").trim();
+  let targetUrl = String(url || "").trim();
   if (!targetUrl) return;
+
+  if (/^file:\/\/\/https?:\/\//i.test(targetUrl)) {
+    targetUrl = targetUrl.replace(/^file:\/\/\//i, "");
+  } else if (/^file:\/\/https?:\/\//i.test(targetUrl)) {
+    targetUrl = targetUrl.replace(/^file:\/\//i, "");
+  }
 
   // SiteSnap Studio: always use GSK profile — skip the profile dialog entirely.
   if (window.isSiteSnapStudioMode || window.parent?.isSiteSnapStudioMode) {
@@ -2293,6 +2299,8 @@ async function openUrlFromDashboard(
 window.initViewPage = initViewPage;
 window.createTab = createTab;
 window.getTabs = getTabs;
+window.getActiveTab = getActiveTab;
+window.closeTab = closeTab;
 window.getActiveWebview = getActiveWebview;
 window.launchInstalledAppFromView = launchInstalledAppFromView;
 window.openUrlFromDashboard = openUrlFromDashboard;

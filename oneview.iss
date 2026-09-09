@@ -1,6 +1,6 @@
 [Setup]
 AppName=OneView
-AppVersion=1.3.9
+AppVersion=1.4.0
 AppPublisher=WPP
 AppPublisherURL=https://wpp.com
 PrivilegesRequired=lowest

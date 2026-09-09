@@ -722,7 +722,7 @@ async function openDetachedTabInView(url, partition, title = "Attached Tab") {
   await loadViewPage();
   const openUrl = await waitForGlobalFunction("openUrlFromDashboard", 5000);
   if (typeof openUrl === "function") {
-    openUrl(targetUrl, partition, title, false);
+    openUrl(targetUrl, partition, title, true);
   }
 }
 
@@ -1678,9 +1678,26 @@ function showTeamsDefaultGuideStep() {
 }
 
 async function maybePromptForDefaultBrowser() {
-  if (isGuestMode()) return;
+  if (isGuestMode() || window.__hasPendingOpenTarget) return;
+  const appStoreContainer = document.getElementById("app-store-container");
+  if (
+    window.viewPageLoaded ||
+    (appStoreContainer && appStoreContainer.classList.contains("view-mode"))
+  ) {
+    closeDefaultBrowserModal();
+    return;
+  }
   const response = await loadDefaultBrowserStatusIntoModal();
   if (!response?.supported || response?.isDefault) {
+    closeDefaultBrowserModal();
+    return;
+  }
+  // Re-check in case view mode loaded during async call
+  if (
+    window.__hasPendingOpenTarget ||
+    window.viewPageLoaded ||
+    (appStoreContainer && appStoreContainer.classList.contains("view-mode"))
+  ) {
     closeDefaultBrowserModal();
     return;
   }
@@ -2689,6 +2706,16 @@ window.addEventListener("DOMContentLoaded", () => {
       } catch (_) {}
     }
     setTheme(savedTheme);
+    fetch("http://127.0.0.1:9731/api/debug-log?msg=" + encodeURIComponent("[Dashboard] Calling /api/notify-dashboard-ready")).catch(() => {});
+    fetch("http://127.0.0.1:9731/api/notify-dashboard-ready")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.hasPendingTarget) {
+          window.__hasPendingOpenTarget = true;
+          closeDefaultBrowserModal();
+        }
+      })
+      .catch(() => {});
   })();
 
   // Sync theme when window gains focus (in case another window changed it)
@@ -2905,7 +2932,13 @@ window.addEventListener("DOMContentLoaded", () => {
   }
 
   restoreSidebarExpandedPreference();
-  window.triggerHomeAction();
+  const initialAppStoreContainer = document.getElementById("app-store-container");
+  if (
+    !window.viewPageLoaded &&
+    !(initialAppStoreContainer && initialAppStoreContainer.classList.contains("view-mode"))
+  ) {
+    window.triggerHomeAction();
+  }
 });
 
 /**
@@ -4415,13 +4448,11 @@ async function loadViewPage(initialUrl = "") {
   }
   if (appStoreContent) appStoreContent.classList.add("hidden");
   if (viewContent) viewContent.style.display = "block";
-  if (dashboardWindowIsMaximized) {
-    scheduleEmbeddedViewBoundsSync();
-  }
+  scheduleEmbeddedViewBoundsSync();
 
   if (window.viewPageLoaded) {
     if (initialUrl && typeof window.openUrlFromDashboard === "function") {
-      window.openUrlFromDashboard(initialUrl, null, "New Tab", false);
+      await window.openUrlFromDashboard(initialUrl, null, "New Tab", false);
     } else {
       const tabsList = document.getElementById("tabsList");
       if (!tabsList || tabsList.children.length === 0) {
@@ -4431,9 +4462,16 @@ async function loadViewPage(initialUrl = "") {
         }
       }
     }
+    scheduleEmbeddedViewBoundsSync();
     if (typeof window.resyncAllWebContentBounds === "function") {
       window.resyncAllWebContentBounds();
     }
+    setTimeout(() => {
+      scheduleEmbeddedViewBoundsSync();
+      if (typeof window.resyncAllWebContentBounds === "function") {
+        window.resyncAllWebContentBounds();
+      }
+    }, 150);
     return;
   }
 
@@ -4458,9 +4496,24 @@ async function loadViewPage(initialUrl = "") {
     const openUrl = await waitForGlobalFunction("openUrlFromDashboard", 5000);
     window.viewPageLoaded = Boolean(openUrl);
     if (initialUrl && typeof openUrl === "function") {
-      openUrl(initialUrl, null, "New Tab", false);
+      await openUrl(initialUrl, null, "New Tab", false);
     }
     scheduleEmbeddedViewBoundsSync();
+    if (typeof window.resyncAllWebContentBounds === "function") {
+      window.resyncAllWebContentBounds();
+    }
+    setTimeout(() => {
+      scheduleEmbeddedViewBoundsSync();
+      if (typeof window.resyncAllWebContentBounds === "function") {
+        window.resyncAllWebContentBounds();
+      }
+    }, 150);
+    setTimeout(() => {
+      scheduleEmbeddedViewBoundsSync();
+      if (typeof window.resyncAllWebContentBounds === "function") {
+        window.resyncAllWebContentBounds();
+      }
+    }, 450);
   }
 }
 
@@ -4496,7 +4549,9 @@ function openWebviewWithPartition(url, partition, title) {
   console.log(`Opening ${url} in partition ${partition || "default"}`);
 }
 
-// Expose for external calls (e.g. from appstore.js)
+// Expose for external calls (e.g. from appstore.js and native open-target)
+window.loadViewPage = loadViewPage;
+window.openDetachedTabInView = openDetachedTabInView;
 window.loadDevProjectStudio = loadDevProjectStudio;
 window.loadAppStore = loadAppStore;
 window.openWebviewWithPartition = openWebviewWithPartition;

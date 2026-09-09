@@ -486,9 +486,9 @@ export function createViewTabsManager({
     );
 
     if (tab.isHome) {
-      homeContent.classList.remove("hidden");
+      homeContent?.classList.remove("hidden");
       nativeTabContent?.classList.add("hidden");
-      webviewsContainer.classList.add("hidden");
+      webviewsContainer?.classList.add("hidden");
       updateBrowserControlsOverlay(tab);
       updateDetachButtonVisibility(tab);
       updateProfileSectionVisibility(tab);
@@ -498,9 +498,9 @@ export function createViewTabsManager({
         searchInput.focus();
       }
     } else if (tab.nativePage) {
-      homeContent.classList.add("hidden");
+      homeContent?.classList.add("hidden");
       nativeTabContent?.classList.remove("hidden");
-      webviewsContainer.classList.add("hidden");
+      webviewsContainer?.classList.add("hidden");
       updateBrowserControlsOverlay(tab);
       updateDetachButtonVisibility(tab);
       updateProfileSectionVisibility(tab);
@@ -510,9 +510,9 @@ export function createViewTabsManager({
       }
       renderNativeSettingsPage(tab);
     } else {
-      homeContent.classList.add("hidden");
+      homeContent?.classList.add("hidden");
       nativeTabContent?.classList.add("hidden");
-      webviewsContainer.classList.remove("hidden");
+      webviewsContainer?.classList.remove("hidden");
       updateBrowserControlsOverlay(tab);
       updateDetachButtonVisibility(tab);
       updateProfileSectionVisibility(tab);
@@ -1155,7 +1155,14 @@ export function createViewTabsManager({
 
   async function createWebviewForTabImpl(tab, activate = true) {
     const createStartedAt = performance.now();
-    const container = document.getElementById("webviews-container");
+    let container = document.getElementById("webviews-container");
+    if (!container) {
+      const viewRoot = document.getElementById("view-page-content") || document.body;
+      container = document.createElement("div");
+      container.id = "webviews-container";
+      container.className = "webviews-container";
+      viewRoot.appendChild(container);
+    }
     const reused = takePooledWebview(tab);
     if (reused) {
       reused.classList.toggle("active", activate);
@@ -1211,6 +1218,14 @@ export function createViewTabsManager({
       wv.hide().catch(() => {});
     }
     wv.syncBounds?.(activate);
+    if (activate) {
+      requestAnimationFrame(() => {
+        wv.syncBounds?.(true);
+      });
+      setTimeout(() => {
+        wv.syncBounds?.(true);
+      }, 100);
+    }
     if (activate && typeof wv.focusWebContents === "function") {
       wv.focusWebContents().catch(() => {});
     }
@@ -1379,8 +1394,14 @@ export function createViewTabsManager({
   }
 
   function normalizeAddressInput(query = "") {
-    const value = String(query || "").trim();
+    let value = String(query || "").trim();
     if (!value) return "";
+
+    if (/^file:\/\/\/https?:\/\//i.test(value)) {
+      value = value.replace(/^file:\/\/\//i, "");
+    } else if (/^file:\/\/https?:\/\//i.test(value)) {
+      value = value.replace(/^file:\/\//i, "");
+    }
 
     const malformedWindowsDriveUrl = value.match(
       /^https?:\/\/([a-zA-Z])(?:\/|%2[fF]|\\)(.*)$/,
@@ -1524,7 +1545,7 @@ export function createViewTabsManager({
       const wv = document.getElementById(`webview-${tab.id}`);
       if (wv) {
         stopWebviewBackgroundTasks(wv);
-        const shouldPool = shouldPoolTabWebview(tab);
+        const shouldPool = !isTeardown && shouldPoolTabWebview(tab);
         if (!shouldPool || !parkWebviewForReuse(wv, tab)) {
           wv.remove();
         }

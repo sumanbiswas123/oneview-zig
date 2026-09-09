@@ -514,6 +514,9 @@ pub const App = struct {
     child_views: std.StringHashMap(ContentView),
     main_webview: ?*Webview = null,
     pending_startup_arg: ?[]const u8 = null,
+    pending_open_target: ?[]const u8 = null,
+    pending_open_time: i64 = 0,
+    is_logged_in: bool = false,
     managed_downloads: std.ArrayList(ManagedDownload),
 
     pub fn init(allocator: std.mem.Allocator) App {
@@ -522,6 +525,9 @@ pub const App = struct {
             .child_views = std.StringHashMap(ContentView).init(allocator),
             .main_webview = null,
             .pending_startup_arg = null,
+            .pending_open_target = null,
+            .pending_open_time = 0,
+            .is_logged_in = false,
             .managed_downloads = std.ArrayList(ManagedDownload).empty,
         };
     }
@@ -2176,36 +2182,106 @@ fn handleConnection(ctx: ConnCtx) void {
     }
 
     if (std.mem.eql(u8, url_path, "/api/attach-detached-view-window")) {
-        const eval_js = std.fmt.allocPrint(allocator,
-            "if (window._wcEmitDetachedTabAttachRequest) window._wcEmitDetachedTabAttachRequest({s});",
-            .{ body }
-        ) catch return;
-        defer allocator.free(eval_js);
-        const eval_js_z = allocator.dupeZ(u8, eval_js) catch return;
-        defer allocator.free(eval_js_z);
-
+        logMsg("[Zig-Attach] Received POST /api/attach-detached-view-window, body={s}", .{body});
         if (g_app_ptr) |app| {
             const user32_op = struct {
                 extern "user32" fn ShowWindow(hWnd: ?*anyopaque, nCmdShow: c_int) callconv(.winapi) i32;
                 extern "user32" fn SetForegroundWindow(hWnd: ?*anyopaque) callconv(.winapi) i32;
                 extern "user32" fn IsIconic(hWnd: ?*anyopaque) callconv(.winapi) i32;
+                extern "user32" fn BringWindowToTop(hWnd: ?*anyopaque) callconv(.winapi) i32;
+                extern "user32" fn SetWindowPos(hWnd: ?*anyopaque, hWndInsertAfter: ?*anyopaque, X: c_int, Y: c_int, cx: c_int, cy: c_int, uFlags: u32) callconv(.winapi) i32;
+                extern "user32" fn GetForegroundWindow() callconv(.winapi) ?*anyopaque;
+                extern "user32" fn GetWindowThreadProcessId(hWnd: ?*anyopaque, lpdwProcessId: ?*u32) callconv(.winapi) u32;
+                extern "user32" fn AttachThreadInput(idAttach: u32, idAttachTo: u32, fAttach: i32) callconv(.winapi) i32;
+            };
+            const kernel32_fg = struct {
+                extern "kernel32" fn GetCurrentThreadId() callconv(.winapi) u32;
             };
             if (app.main_window_hwnd) |hwnd| {
+                logMsg("[Zig-Attach] Bringing main window hwnd={?p} to foreground", .{hwnd});
                 if (user32_op.IsIconic(hwnd) != 0) {
                     _ = user32_op.ShowWindow(hwnd, 9); // SW_RESTORE = 9
                 } else {
                     _ = user32_op.ShowWindow(hwnd, 5); // SW_SHOW = 5
                 }
-                _ = user32_op.SetForegroundWindow(hwnd);
+
+                const cur_fg = user32_op.GetForegroundWindow();
+                const fg_thread = if (cur_fg) |fg| user32_op.GetWindowThreadProcessId(fg, null) else 0;
+                const my_thread = kernel32_fg.GetCurrentThreadId();
+                if (fg_thread != 0 and fg_thread != my_thread) {
+                    _ = user32_op.AttachThreadInput(my_thread, fg_thread, 1);
+                    _ = user32_op.BringWindowToTop(hwnd);
+                    _ = user32_op.SetForegroundWindow(hwnd);
+                    _ = user32_op.AttachThreadInput(my_thread, fg_thread, 0);
+                } else {
+                    _ = user32_op.BringWindowToTop(hwnd);
+                    _ = user32_op.SetForegroundWindow(hwnd);
+                }
+
+                const HWND_TOPMOST: ?*anyopaque = @ptrFromInt(@as(usize, ~@as(usize, 0)));
+                const HWND_NOTOPMOST: ?*anyopaque = @ptrFromInt(@as(usize, ~@as(usize, 1)));
+                _ = user32_op.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+                _ = user32_op.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+
+                // Post message to UI thread so WebView2 executes script synchronously on its owner thread
+                const WM_USER = 0x0400;
+                const WM_ATTACH_TAB_MSG = WM_USER + 51;
+                const body_copy = std.heap.page_allocator.dupeZ(u8, body) catch null;
+                if (body_copy) |bc| {
+                    logMsg("[Zig-Attach] Posting WM_ATTACH_TAB_MSG to main UI thread", .{});
+                    _ = PostMessageA(hwnd, WM_ATTACH_TAB_MSG, 0, @intCast(@intFromPtr(bc.ptr)));
+                }
             }
-            if (app.main_webview) |main_wv| {
-                logMsg("[Zig] HTTP attach-detached-view-window: evaluating JS: {s}", .{eval_js_z});
-                main_wv.eval(eval_js_z) catch |err| {
-                    logMsg("[Zig] HTTP attach-detached-view-window: eval error: {}", .{err});
-                };
-            }
+        } else {
+            logMsg("[Zig-Attach] ERROR: g_app_ptr is null!", .{});
         }
         sendJson(ctx.sock, "{\"success\":true}");
+        return;
+    }
+
+    if (std.mem.eql(u8, url_path, "/api/notify-dashboard-ready")) {
+        logMsg("[Zig-Ready] /api/notify-dashboard-ready called", .{});
+        if (g_app_ptr) |app| {
+            app.is_logged_in = true;
+            var has_pending = false;
+            if (app.pending_open_target) |p_target| {
+                const now = milliTimestamp();
+                logMsg("[Zig-Ready] Found pending_open_target='{s}', age={d}ms", .{ p_target, now - app.pending_open_time });
+                // Check if pending target arrived within the last 5 minutes (300,000 ms)
+                if (now - app.pending_open_time <= 300000) {
+                    has_pending = true;
+                    const target_copy = std.heap.page_allocator.dupeZ(u8, p_target) catch null;
+                    app.allocator.free(p_target);
+                    app.pending_open_target = null;
+                    app.pending_open_time = 0;
+                    if (target_copy) |tc| {
+                        if (app.main_window_hwnd) |hwnd| {
+                            logMsg("[Zig-Ready] Posting WM_OPEN_TARGET_MSG to UI thread with '{s}'", .{tc});
+                            const WM_USER = 0x0400;
+                            const WM_OPEN_TARGET_MSG = WM_USER + 50;
+                            _ = PostMessageA(hwnd, WM_OPEN_TARGET_MSG, 0, @intCast(@intFromPtr(tc.ptr)));
+                        } else {
+                            handleOpenTarget(app, tc);
+                            std.heap.page_allocator.free(tc);
+                        }
+                    }
+                } else {
+                    logMsg("[Zig-Ready] Pending target expired (>5 min), discarding", .{});
+                    allocator.free(p_target);
+                    app.pending_open_target = null;
+                    app.pending_open_time = 0;
+                }
+            } else {
+                logMsg("[Zig-Ready] No pending_open_target found", .{});
+            }
+            if (has_pending) {
+                sendJson(ctx.sock, "{\"success\":true,\"hasPendingTarget\":true}");
+            } else {
+                sendJson(ctx.sock, "{\"success\":true,\"hasPendingTarget\":false}");
+            }
+            return;
+        }
+        sendJson(ctx.sock, "{\"success\":true,\"hasPendingTarget\":false}");
         return;
     }
 
@@ -4830,7 +4906,16 @@ const INIT_SCRIPT =
     \\    return window.api.webContentCall("open-detached-view-window", { url: finalUrl, title: payload.title || 'Detached Tab' });
     \\  };
     \\  window.api.attachDetachedViewWindow = window.api.attachDetachedViewWindow || async function(payload) {
-    \\    return window.api.webContentCall("attach-detached-view-window", payload);
+    \\    try {
+    \\      const r = await fetch('http://127.0.0.1:9731/api/attach-detached-view-window', {
+    \\        method: 'POST',
+    \\        headers: { 'Content-Type': 'application/json' },
+    \\        body: JSON.stringify(payload)
+    \\      });
+    \\      return await r.json();
+    \\    } catch(e) {
+    \\      return { success: false, message: e.message };
+    \\    }
     \\  };
     \\  window.api.minimize = window.api.minimize || async function() {
     \\    return window.api.webContentCall("minimize-window", {});
@@ -6767,6 +6852,24 @@ fn customWndProc(hwnd: ?*anyopaque, msg: u32, wparam: usize, lparam: usize) call
             _ = user32_dest.DestroyWindow(hwnd);
             return 0;
         }
+        // Tear down view page and clear pending target if open before hiding to tray
+        if (g_app_ptr) |app| {
+            app.is_logged_in = false;
+            if (app.pending_open_target) |p_target| {
+                app.allocator.free(p_target);
+                app.pending_open_target = null;
+                app.pending_open_time = 0;
+            }
+            if (app.main_webview) |main_wv| {
+                main_wv.eval(
+                    \\if (typeof window.closeAppStore === 'function') {
+                    \\  window.closeAppStore({ preserveViewState: false });
+                    \\} else {
+                    \\  window.dispatchEvent(new Event('teardown-view-system'));
+                    \\}
+                ) catch {};
+            }
+        }
         // Hide to tray instead of closing
         _ = ShowWindow(hwnd, SW_HIDE);
         return 0;
@@ -6800,6 +6903,50 @@ fn customWndProc(hwnd: ?*anyopaque, msg: u32, wparam: usize, lparam: usize) call
             _ = DestroyMenu(hmenu);
             return 0;
         }
+    }
+
+    const WM_ATTACH_TAB_MSG = WM_USER + 51;
+    if (msg == WM_ATTACH_TAB_MSG) {
+        logMsg("[Zig-Attach-UI] Received WM_ATTACH_TAB_MSG on main UI thread, lparam={d}", .{lparam});
+        if (lparam != 0) {
+            const ptr: [*:0]const u8 = @ptrFromInt(@as(usize, @intCast(lparam)));
+            const body_slice = std.mem.span(ptr);
+            logMsg("[Zig-Attach-UI] body='{s}'", .{body_slice});
+            const eval_js = std.fmt.allocPrint(std.heap.page_allocator,
+                \\(function() {{
+                \\  const payload = {s};
+                \\  fetch('http://127.0.0.1:9731/api/debug-log?msg=' + encodeURIComponent('[JS-Attach] Executing on UI thread! payload=' + JSON.stringify(payload) + ', openDetachedTabInView=' + typeof window.openDetachedTabInView));
+                \\  if (typeof window.openDetachedTabInView === 'function') {{
+                \\    window.openDetachedTabInView(payload?.url, payload?.partition, payload?.title);
+                \\  }} else if (typeof window._wcEmitDetachedTabAttachRequest === 'function') {{
+                \\    window._wcEmitDetachedTabAttachRequest(payload);
+                \\  }} else if (typeof window.loadViewPage === 'function') {{
+                \\    window.loadViewPage(payload?.url);
+                \\  }}
+                \\}})();
+                ,
+                .{ body_slice }
+            ) catch null;
+            if (eval_js) |ejs| {
+                defer std.heap.page_allocator.free(ejs);
+                const ejs_z = std.heap.page_allocator.dupeZ(u8, ejs) catch null;
+                if (ejs_z) |ejsz| {
+                    defer std.heap.page_allocator.free(ejsz);
+                    if (g_app_ptr) |app| {
+                        if (app.main_webview) |main_wv| {
+                            logMsg("[Zig-Attach-UI] Evaluating JS on UI thread on main_webview", .{});
+                            main_wv.eval(ejsz) catch |err| {
+                                logMsg("[Zig-Attach-UI] UI eval error: {}", .{err});
+                            };
+                        } else {
+                            logMsg("[Zig-Attach-UI] ERROR: app.main_webview is null!", .{});
+                        }
+                    }
+                }
+            }
+            std.heap.page_allocator.free(body_slice);
+        }
+        return 0;
     }
 
     if (msg == WM_OPEN_TARGET_MSG) {
@@ -7044,14 +7191,45 @@ fn findEMpowerPDF(allocator: std.mem.Allocator) ?[]const u8 {
 fn handleOpenTarget(app: *App, target: []const u8) void {
     const allocator = app.allocator;
 
-    const kernel32 = struct {
+    const user32 = struct {
         extern "user32" fn SetForegroundWindow(hWnd: ?*anyopaque) callconv(.winapi) u32;
         extern "user32" fn ShowWindow(hWnd: ?*anyopaque, nCmdShow: c_int) callconv(.winapi) u32;
+        extern "user32" fn IsIconic(hWnd: ?*anyopaque) callconv(.winapi) i32;
+        extern "user32" fn BringWindowToTop(hWnd: ?*anyopaque) callconv(.winapi) i32;
+        extern "user32" fn SetWindowPos(hWnd: ?*anyopaque, hWndInsertAfter: ?*anyopaque, X: c_int, Y: c_int, cx: c_int, cy: c_int, uFlags: u32) callconv(.winapi) i32;
+        extern "user32" fn GetForegroundWindow() callconv(.winapi) ?*anyopaque;
+        extern "user32" fn GetWindowThreadProcessId(hWnd: ?*anyopaque, lpdwProcessId: ?*u32) callconv(.winapi) u32;
+        extern "user32" fn AttachThreadInput(idAttach: u32, idAttachTo: u32, fAttach: i32) callconv(.winapi) i32;
+    };
+    const kernel32_fg = struct {
+        extern "kernel32" fn GetCurrentThreadId() callconv(.winapi) u32;
     };
     if (app.main_window_hwnd) |hwnd| {
-        // Always show - window may be hidden to tray (not just minimized)
-        _ = kernel32.ShowWindow(hwnd, SW_SHOW);
-        _ = kernel32.SetForegroundWindow(hwnd);
+        // SW_RESTORE (9) restores minimized window, or SW_SHOW (5) shows it
+        if (user32.IsIconic(hwnd) != 0) {
+            _ = user32.ShowWindow(hwnd, 9); // SW_RESTORE
+        } else {
+            _ = user32.ShowWindow(hwnd, 5); // SW_SHOW
+        }
+
+        // Force to true foreground even if another app is active
+        const cur_fg = user32.GetForegroundWindow();
+        const fg_thread = if (cur_fg) |fg| user32.GetWindowThreadProcessId(fg, null) else 0;
+        const my_thread = kernel32_fg.GetCurrentThreadId();
+        if (fg_thread != 0 and fg_thread != my_thread) {
+            _ = user32.AttachThreadInput(my_thread, fg_thread, 1);
+            _ = user32.BringWindowToTop(hwnd);
+            _ = user32.SetForegroundWindow(hwnd);
+            _ = user32.AttachThreadInput(my_thread, fg_thread, 0);
+        } else {
+            _ = user32.BringWindowToTop(hwnd);
+            _ = user32.SetForegroundWindow(hwnd);
+        }
+
+        const HWND_TOPMOST: ?*anyopaque = @ptrFromInt(@as(usize, ~@as(usize, 0))); // -1
+        const HWND_NOTOPMOST: ?*anyopaque = @ptrFromInt(@as(usize, ~@as(usize, 1))); // -2
+        _ = user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        _ = user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     }
 
     // Reset to login screen when brought to front via shortcut, tray, or search
@@ -7060,7 +7238,24 @@ fn handleOpenTarget(app: *App, target: []const u8) void {
                              trimmed_target.len == 0 or 
                              (trimmed_target.len > 0 and trimmed_target[0] == '-');
 
+    logMsg("[Zig-Open] handleOpenTarget called with target='{s}', is_logged_in={}", .{ trimmed_target, app.is_logged_in });
     if (is_explicit_show) {
+        logMsg("[Zig-Open] Explicit show detected, navigating to login", .{});
+        if (app.main_webview) |main_wv| {
+            main_wv.navigate("http://127.0.0.1:" ++ SERVER_PORT_STR ++ "/pages/login/index.html") catch {};
+        }
+        return;
+    }
+
+    // Check if user is logged in: if not, require login and remember the target for up to 5 minutes
+    if (!app.is_logged_in) {
+        if (app.pending_open_target) |old_t| {
+            allocator.free(old_t);
+        }
+        app.pending_open_target = allocator.dupe(u8, trimmed_target) catch null;
+        app.pending_open_time = milliTimestamp();
+        logMsg("[Zig-Open] User not logged in, stored pending_open_target='{s}', navigating to login", .{trimmed_target});
+
         if (app.main_webview) |main_wv| {
             main_wv.navigate("http://127.0.0.1:" ++ SERVER_PORT_STR ++ "/pages/login/index.html") catch {};
         }
@@ -7093,25 +7288,56 @@ fn handleOpenTarget(app: *App, target: []const u8) void {
 
     if (!opened_pdf_externally) {
         if (app.main_webview) |main_wv| {
-            // Convert to file:// protocol if it is a local path
-            var url_buf: [2048]u8 = undefined;
-            var url: []const u8 = target;
-            if (std.mem.indexOf(u8, target, ":\\") != null or std.mem.indexOf(u8, target, ":/") != null or (target.len > 0 and target[0] == '\\')) {
-                var temp_buf: [2048]u8 = undefined;
-                @memcpy(temp_buf[0..target.len], target);
-                for (temp_buf[0..target.len]) |*c| {
-                    if (c.* == '\\') c.* = '/';
-                }
-                url = std.fmt.bufPrint(&url_buf, "file:///{s}", .{temp_buf[0..target.len]}) catch target;
+            // Strip accidental file:/// from web URLs (e.g. file:///https://...)
+            var raw_target = trimmed_target;
+            if (std.mem.startsWith(u8, raw_target, "file:///http://") or std.mem.startsWith(u8, raw_target, "file:///https://")) {
+                raw_target = raw_target[8..];
+            } else if (std.mem.startsWith(u8, raw_target, "file://http://") or std.mem.startsWith(u8, raw_target, "file://https://")) {
+                raw_target = raw_target[7..];
             }
 
+            // Convert to file:// protocol only if it is actually a local path (C:\..., /..., \\...)
+            var url_buf: [2048]u8 = undefined;
+            var url: []const u8 = raw_target;
+            const is_web = std.mem.startsWith(u8, raw_target, "http://") or std.mem.startsWith(u8, raw_target, "https://") or std.mem.startsWith(u8, raw_target, "file://");
+            if (!is_web and (std.mem.indexOf(u8, raw_target, ":\\") != null or std.mem.indexOf(u8, raw_target, ":/") != null or (raw_target.len > 0 and raw_target[0] == '\\'))) {
+                var temp_buf: [2048]u8 = undefined;
+                const copy_len = @min(temp_buf.len, raw_target.len);
+                @memcpy(temp_buf[0..copy_len], raw_target[0..copy_len]);
+                for (temp_buf[0..copy_len]) |*c| {
+                    if (c.* == '\\') c.* = '/';
+                }
+                url = std.fmt.bufPrint(&url_buf, "file:///{s}", .{temp_buf[0..copy_len]}) catch raw_target;
+            }
+
+            const escaped_url = escapeJsString(allocator, url);
+            defer allocator.free(escaped_url);
+
             const eval_js = std.fmt.allocPrint(allocator,
-                \\document.dispatchEvent(new CustomEvent('zero:browser-extension-command', {{ detail: {{ command: 'tabs-create', url: '{s}', active: true }} }}));
-                , .{url}) catch return;
+                \\(function() {{
+                \\  let targetUrl = '{s}';
+                \\  fetch('http://127.0.0.1:9731/api/debug-log?msg=' + encodeURIComponent('[JS-Open] handleOpenTarget evaluating, targetUrl=' + targetUrl + ', loadViewPage=' + typeof window.loadViewPage + ', openUrlFromDashboard=' + typeof window.openUrlFromDashboard));
+                \\  if (/^file:\/\/\/https?:\/\//i.test(targetUrl)) {{
+                \\    targetUrl = targetUrl.replace(/^file:\/\/\//i, '');
+                \\  }} else if (/^file:\/\/https?:\/\//i.test(targetUrl)) {{
+                \\    targetUrl = targetUrl.replace(/^file:\/\//i, '');
+                \\  }}
+                \\  if (typeof window.loadViewPage === 'function') {{
+                \\    window.loadViewPage(targetUrl);
+                \\  }} else if (typeof window.openUrlFromDashboard === 'function') {{
+                \\    window.openUrlFromDashboard(targetUrl, null, 'New Tab', true);
+                \\  }} else {{
+                \\    document.dispatchEvent(new CustomEvent('zero:browser-extension-command', {{ detail: {{ command: 'tabs-create', url: targetUrl, active: true }} }}));
+                \\  }}
+                \\}})();
+                , .{escaped_url}) catch return;
             defer allocator.free(eval_js);
             const eval_js_z = allocator.dupeZ(u8, eval_js) catch return;
             defer allocator.free(eval_js_z);
-            main_wv.eval(eval_js_z) catch {};
+            logMsg("[Zig-Open] Evaluating open JS on main_webview", .{});
+            main_wv.eval(eval_js_z) catch |err| {
+                logMsg("[Zig-Open] Eval error on main_webview: {}", .{err});
+            };
         }
     }
 }

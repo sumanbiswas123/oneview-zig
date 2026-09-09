@@ -1,6 +1,6 @@
 {
   "name": "oneview-suite",
-  "version": "1.3.9",
+  "version": "1.4.0",
   "description": "OneView Suite compile & package scripts",
   "scripts": {
     "sync:version": "node scripts/sync-version.js",
